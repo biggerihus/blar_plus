@@ -30,3 +30,42 @@ source venv/bin/activate
 
 # 4. Instalar dependencias
 pip install -r requirements.txt
+
+## 🏗️ Arquitectura del Proyecto
+
+```mermaid
+flowchart TD
+    Root[📁 blar_plus/]
+    Root --> C1[📁 interfaz_grafica/]
+    C1 --> C1_1[📄 ventana_principal.py]
+    C1 --> C1_2[📄 barra_estado.py]
+    C1 --> C1_3[📄 lista_dtc.py]
+    C1 --> C1_4[📄 dialogo_confirmacion.py]
+    C1 --> C1_5[📄 grafico_tiempo_real.py]
+
+    Root --> C2[📁 nucleo_y_controladores/]
+    C2 --> C2_1[📄 trabajador_obd.py]
+    C2 --> C2_2[📄 controlador_reporte.py]
+
+    Root --> C3[📁 capa_de_datos/]
+    C3 --> C3_1[📄 gestor_bd.py]
+    C3 --> C3_2[📄 enriquecedor.py]
+    C3 --> C3_3[📄 cliente_rest.py]
+    C3 --> C3_4[📄 modelo_reporte.py]
+    C3 --> C3_5[💾 dtc_database.db]
+
+    Root --> C4[📁 abstraccion_de_hardware/]
+    C4 --> C4_1[📄 i_adaptador_obd.py]
+    C4 --> C4_2[📄 adaptador_elm327.py]
+    C4 --> C4_3[📄 adaptador_simulador.py]
+    C4 --> C4_4[📄 estrategias_protocolo.py]
+```
+
+## 🔄 Flujo de Importaciones entre Capas
+
+```mermaid
+flowchart TD
+    GUI[Capa 1: interfaz_grafica] -->|Importa| CTRL[Capa 2: nucleo_y_controladores]
+    CTRL -->|Importa| DATA[Capa 3: capa_de_datos]
+    CTRL -->|Importa| HW[Capa 4: abstraccion_de_hardware]
+```
