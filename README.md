@@ -30,7 +30,7 @@ source venv/bin/activate
 
 # 4. Instalar dependencias
 pip install -r requirements.txt
-
+```
 ## 🏗️ Arquitectura del Proyecto
 
 ```mermaid
