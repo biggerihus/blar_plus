@@ -1,8 +1,14 @@
 """
-Pruebas unitarias para la capa de Control y Concurrencia (TrabajadorOBD).
+Pruebas unitarias integradas para la capa de Control y Concurrencia.
 
-Verifica el comportamiento asíncrono y la correcta emisión de señales Qt
-utilizando objetos Mock y el fixture `qtbot` de pytest-qt.
+Este módulo evalúa:
+1. El comportamiento asíncrono y emisión de señales Qt de `TrabajadorOBD`.
+2. El manejo de excepciones de hardware dentro del hilo secundario.
+3. La lógica de negocio y estructuración de datos en `ControladorReporte`.
+
+Dependencias de prueba:
+- `unittest.mock.MagicMock`: Simulación desacoplada del contrato `IAdaptadorOBD`.
+- `pytestqt.qtbot.QtBot`: Intercepción asíncrona de señales Qt sin bloqueo de interfaz.
 
 Autor: Erick Polanco Romero
 """
@@ -11,54 +17,92 @@ from unittest.mock import MagicMock
 import pytest
 from pytestqt.qtbot import QtBot
 
-from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
+from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
+from nucleo_y_controladores.controlador_reporte import ControladorReporte
 
 
 def test_trabajador_obd_emite_datos_correctos(qtbot: QtBot) -> None:
     """
-    Prueba el flujo exitoso de lectura OBD.
+    Verifica la transmisión exitosa de datos DTC mediante señales Qt en un hilo secundario.
 
-    Verifica que al conectarse correctamente, el hilo lea los datos del
-    adaptador y emita la señal `datos_recibidos` con la lista esperada.
+    Pasos de la prueba:
+    1. Configura un mock de `IAdaptadorOBD` para simular lectura exitosa de códigos DTC.
+    2. Instancia `TrabajadorOBD` asociando el adaptador mock.
+    3. Intercepta la señal `datos_recibidos` mediante el gestor de contexto `qtbot.waitSignal`.
+    4. Inicia la ejecución asíncrona del hilo (`.start()`).
+    5. Asevera que los datos emitidos por la señal correspondan a la lista esperada.
     """
-    # 1. Creación del Mock que simula el adaptador de hardware desacoplado
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
     mock_adaptador.conectar.return_value = True
     mock_adaptador.leer_dtc.return_value = ["P0300", "P0171"]
 
-    # 2. Instanciación de la clase a probar
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 
-    # 3. Intercepción asíncrona de la señal mediante qtbot
     with qtbot.waitSignal(trabajador.datos_recibidos, timeout=1000) as blocker:
-        trabajador.start()  # Arranca el hilo secundario
+        trabajador.start()
 
-    # 4. Validar que la señal haya sido emitida con el argumento correcto
     assert blocker.args == [["P0300", "P0171"]]
-
-    # 5. Verificar que se llamaron las funciones clave del adaptador
     mock_adaptador.conectar.assert_called_once()
     mock_adaptador.leer_dtc.assert_called_once()
 
 
 def test_trabajador_obd_manejo_de_error(qtbot: QtBot) -> None:
     """
-    Prueba el manejo de excepciones durante la lectura OBD.
+    Verifica la captura y notificación de excepciones de hardware en el hilo secundario.
 
-    Verifica que ante una falla de conexión en la capa de hardware,
-    el hilo capture la excepción y emita la señal `error_ocurrido`.
+    Pasos de la prueba:
+    1. Configura el mock del adaptador para lanzar un `ConnectionError` durante la lectura.
+    2. Intercepta la emisión de la señal `error_ocurrido`.
+    3. Asevera que el mensaje transmitido por la señal contenga el detalle original de la excepción.
     """
-    # 1. Configurar Mock para que simule una falla de puerto serie mediante excepción
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
     mock_adaptador.conectar.return_value = True
     mock_adaptador.leer_dtc.side_effect = ConnectionError("Falla en puerto serie")
 
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 
-    # 2. Interceptar la señal de error esperada
     with qtbot.waitSignal(trabajador.error_ocurrido, timeout=1000) as blocker:
         trabajador.start()
 
-    # 3. Validar que el mensaje transmitido por la señal contenga el texto original del fallo
     assert "Falla en puerto serie" in blocker.args[0]
+
+
+def test_controlador_reporte_generar_reporte() -> None:
+    """
+    Evalúa la correcta estructuración y cálculo de métricas en `ControladorReporte`.
+
+    Pasos de la prueba:
+    1. Instancia `ControladorReporte`.
+    2. Genera un reporte enviando una lista de fallas de prueba.
+    3. Valida el conteo total de fallas, la coherencia de los códigos y la severidad asignada.
+    """
+    controlador = ControladorReporte()
+    dtcs_prueba = ["P0300", "P0171"]
+
+    reporte = controlador.generar_reporte(dtcs_prueba)
+
+    assert reporte["total_fallas"] == 2
+    assert reporte["codigos"] == dtcs_prueba
+    assert reporte["estado"] == "Crítico"
+
+
+def test_controlador_reporte_historial() -> None:
+    """
+    Verifica la persistencia y acumulación ordenada de diagnósticos en el historial.
+
+    Pasos de la prueba:
+    1. Genera dos reportes consecutivos (uno con fallas y otro limpio).
+    2. Obtiene el historial acumulado.
+    3. Comprueba el total de registros guardados y el estado correspondiente de cada uno.
+    """
+    controlador = ControladorReporte()
+
+    controlador.generar_reporte(["P0300"])
+    controlador.generar_reporte([])
+
+    historial = controlador.obtener_historial()
+
+    assert len(historial) == 2
+    assert historial[0]["estado"] == "Crítico"
+    assert historial[1]["estado"] == "Sin Fallas"
