@@ -25,7 +25,7 @@ def test_trabajador_obd_emite_datos_correctos(qtbot: QtBot) -> None:
     # 1. Creación del Mock que simula el adaptador de hardware desacoplado
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
     mock_adaptador.conectar.return_value = True
-    mock_adaptador.leer_dtcs.return_value = ["P0300", "P0171"]
+    mock_adaptador.leer_dtc.return_value = ["P0300", "P0171"]
 
     # 2. Instanciación de la clase a probar
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
@@ -39,7 +39,7 @@ def test_trabajador_obd_emite_datos_correctos(qtbot: QtBot) -> None:
 
     # 5. Verificar que se llamaron las funciones clave del adaptador
     mock_adaptador.conectar.assert_called_once()
-    mock_adaptador.leer_dtcs.assert_called_once()
+    mock_adaptador.leer_dtc.assert_called_once()
 
 
 def test_trabajador_obd_manejo_de_error(qtbot: QtBot) -> None:
@@ -52,7 +52,7 @@ def test_trabajador_obd_manejo_de_error(qtbot: QtBot) -> None:
     # 1. Configurar Mock para que simule una falla de puerto serie mediante excepción
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
     mock_adaptador.conectar.return_value = True
-    mock_adaptador.leer_dtcs.side_effect = ConnectionError("Falla en puerto serie")
+    mock_adaptador.leer_dtc.side_effect = ConnectionError("Falla en puerto serie")
 
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 

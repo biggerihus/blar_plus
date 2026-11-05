@@ -53,8 +53,8 @@ class TrabajadorOBD(QThread):
         try:
             # 1. Intentar establecer la conexión con el adaptador (físico o simulado)
             if self.adaptador.conectar():
-                # 2. Leer la lista de códigos de falla activos
-                dtcs: list[str] = self.adaptador.leer_dtcs()
+                # 2. Leer la lista de códigos de falla activos (método singular de IAdaptadorOBD)
+                dtcs: list[str] = self.adaptador.leer_dtc()
                 # 3. Notificar a la GUI transmitiendo la lista de códigos
                 self.datos_recibidos.emit(dtcs)
             else:
