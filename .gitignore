@@ -21,3 +21,7 @@ __pycache__/
 # Archivos de registros y temporales
 *.log
 .DS_Store
+dist/
+build/
+*.pyc
+__pycache__/
