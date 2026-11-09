@@ -1,0 +1,79 @@
+('/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+ 'software/blar_plus/build/BlarPlus/BlarPlus',
+ False,
+ False,
+ True,
+ None,
+ None,
+ False,
+ False,
+ None,
+ True,
+ False,
+ None,
+ None,
+ None,
+ '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+ 'software/blar_plus/build/BlarPlus/BlarPlus.pkg',
+ [('pyi-contents-directory _internal', '', 'OPTION'),
+  ('PYZ-00.pyz',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/build/BlarPlus/PYZ-00.pyz',
+   'PYZ'),
+  ('struct',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/build/BlarPlus/localpycs/struct.pyc',
+   'PYMODULE'),
+  ('pyimod01_archive',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/build/BlarPlus/localpycs/pyimod01_archive.pyc',
+   'PYMODULE'),
+  ('pyimod02_importers',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/build/BlarPlus/localpycs/pyimod02_importers.pyc',
+   'PYMODULE'),
+  ('pyimod03_ctypes',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/build/BlarPlus/localpycs/pyimod03_ctypes.pyc',
+   'PYMODULE'),
+  ('pyiboot01_bootstrap',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/loader/pyiboot01_bootstrap.py',
+   'PYSOURCE'),
+  ('pyi_rth_inspect',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/hooks/rthooks/pyi_rth_inspect.py',
+   'PYSOURCE'),
+  ('pyi_rth_pkgutil',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/hooks/rthooks/pyi_rth_pkgutil.py',
+   'PYSOURCE'),
+  ('pyi_rth_multiprocessing',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/hooks/rthooks/pyi_rth_multiprocessing.py',
+   'PYSOURCE'),
+  ('pyi_rth_setuptools',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/hooks/rthooks/pyi_rth_setuptools.py',
+   'PYSOURCE'),
+  ('pyi_rth_pyside6',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/hooks/rthooks/pyi_rth_pyside6.py',
+   'PYSOURCE'),
+  ('pyi_rth_pyqtgraph_multiprocess',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/_pyinstaller_hooks_contrib/rthooks/pyi_rth_pyqtgraph_multiprocess.py',
+   'PYSOURCE'),
+  ('main',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/main.py',
+   'PYSOURCE')],
+ [],
+ False,
+ False,
+ 1794225452,
+ [('run',
+   '/home/biggerihus/Documentos/UACM/8- Semestre/Analisis de modelacion de '
+   'software/blar_plus/venv/lib/python3.14/site-packages/PyInstaller/bootloader/Linux-64bit-intel/run',
+   'EXECUTABLE')],
+ '/usr/lib/x86_64-linux-gnu/libpython3.14.so.1.0')

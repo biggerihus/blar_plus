@@ -94,35 +94,33 @@ class AdaptadorELM327(IAdaptadorOBD):
     # AdaptadorELM327.detectar_puertos()
 
     def detectar_puertos() -> list[str]:
-        # Función que identifica los puertos seriales disponibles.
+        # Función que identifica los puertos seriales USB reales disponibles.
         #
         # list[str] indica que devolverá una lista de textos.
         #
         # Por ejemplo:
         # ["/dev/ttyUSB0", "/dev/ttyUSB1"]
 
-        return [p.device for p in list_ports.comports()]
-        # list_ports.comports() obtiene los puertos detectados.
-        #
-        # Cada elemento p contiene información sobre un puerto.
-        #
-        # p.device obtiene el nombre del dispositivo.
-        #
-        # for p in list_ports.comports()
-        # Recorre todos los puertos disponibles.
-        #
-        # Los corchetes [] crean una lista con sus nombres.
-        #
-        # Ejemplo:
-        # Puerto 1: /dev/ttyUSB0
-        # Puerto 2: /dev/ttyUSB1
-        #
-        # Resultado:
-        # ["/dev/ttyUSB0", "/dev/ttyUSB1"]
-        #
-        # IMPORTANTE:
-        # Detecta puertos seriales, no necesariamente
-        # que todos sean adaptadores ELM327.
+        puertos_validos = []
+        # Lista temporal para almacenar únicamente los puertos válidos.
+
+        for p in list_ports.comports():
+            # list_ports.comports() obtiene los puertos detectados en el sistema.
+            # Cada elemento p contiene información sobre un puerto.
+            dev = p.device
+            # p.device obtiene el nombre del dispositivo.
+
+            # Filtrar los 32 puertos serie genéricos del kernel de Linux (/dev/ttyS0 a /dev/ttyS31)
+            # que no corresponden a un dispositivo USB o físico real conectado
+            if dev.startswith("/dev/ttyS") and "USB" not in p.hwid.upper():
+                continue
+
+            puertos_validos.append(dev)
+
+        return puertos_validos
+        # Ejemplo de resultado limpio:
+        # En Linux con escáner USB: ["/dev/ttyUSB0"]
+        # En Windows con escáner USB: ["COM3"]
 
 
     def conectar(self, puerto: str = "/dev/ttyUSB0", baudrate: int = 38400) -> bool:
@@ -590,7 +588,7 @@ class AdaptadorELM327(IAdaptadorOBD):
             #
             # Detecta la expresión BUS INIT en la respuesta.
             #
-            # El código considera cualquier respuesta que
+            # El código considers cualquier respuesta que
             # contenga esa expresión como inválida.
             #
             # or significa que basta con que una condición

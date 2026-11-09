@@ -55,16 +55,18 @@ class TrabajadorOBD(QThread):
     # Método privado para calcular y dar formato de texto plano a la duración de la sesión
     def _obtener_tiempo_sesion_formateado(self) -> str:
         """Calcula y formatea el tiempo transcurrido desde que se inició la sesión activa."""
-        # Si la sesión no ha iniciado correctamente, retornar 0 s
         if self._tiempo_inicio_sesion <= 0:
             return "0 s"
-        # Cálculo de los segundos totales transcurridos desde time.time()
         segundos_totales = int(time.time() - self._tiempo_inicio_sesion)
-        # Extracción de minutos y segundos enteros
         minutos = segundos_totales // 60
         segundos = segundos_totales % 60
-        # Retornar formato compuesto (ej. '1 min 20 s') o simple (ej. '40 s')
         return f"{minutos} min {segundos} s" if minutos > 0 else f"{segundos} s"
+
+    # Método auxiliar para consultar PIDs de forma segura lanzando la excepción hacia el hilo
+    def _leer_pid_seguro(self, pid: str) -> float:
+        """Lee un PID del adaptador; si ocurre un fallo de conexión, lo propaga al bucle principal."""
+        valor = self.adaptador.leer_pid(pid)
+        return float(valor) if valor is not None else 0.0
 
     # Método principal de entrada del hilo secundario ejecutado en segundo plano
     def run(self) -> None:
@@ -79,18 +81,18 @@ class TrabajadorOBD(QThread):
                     # Emisión asíncrona de códigos hacia la GUI
                     self.datos_recibidos.emit(dtcs)
 
-                    # Lectura síncrona del bloque de 10 sensores OBD-II
+                    # Lectura síncrona del bloque de sensores OBD-II
                     sensores: dict[str, float] = {
-                        "rpm": self.adaptador.leer_pid("010C"),
-                        "velocidad": self.adaptador.leer_pid("010D"),
-                        "temperatura": self.adaptador.leer_pid("0105"),
-                        "carga_motor": self.adaptador.leer_pid("0104"),
-                        "posicion_acelerador": self.adaptador.leer_pid("0111"),
-                        "maf": self.adaptador.leer_pid("0110"),
-                        "sensor_o2": self.adaptador.leer_pid("0114"),
-                        "iat": self.adaptador.leer_pid("010F"),
-                        "nivel_combustible": self.adaptador.leer_pid("012F"),
-                        "presion_map": self.adaptador.leer_pid("010B"),
+                        "rpm": self._leer_pid_seguro("010C"),
+                        "velocidad": self._leer_pid_seguro("010D"),
+                        "temperatura": self._leer_pid_seguro("0105"),
+                        "carga_motor": self._leer_pid_seguro("0104"),
+                        "posicion_acelerador": self._leer_pid_seguro("0111"),
+                        "maf": self._leer_pid_seguro("0110"),
+                        "sensor_o2": self._leer_pid_seguro("0114"),
+                        "iat": self._leer_pid_seguro("010F"),
+                        "nivel_combustible": self._leer_pid_seguro("012F"),
+                        "presion_map": self._leer_pid_seguro("010B"),
                     }
 
                     # Emisión asíncrona del diccionario de telemetría hacia la GUI
@@ -102,7 +104,7 @@ class TrabajadorOBD(QThread):
                     # Obtener la duración real calculada de la sesión
                     tiempo_fmt = self._obtener_tiempo_sesion_formateado()
 
-                    # Emitir señal de error empaquetada con texto plano estandarizado con \n
+                    # Emitir señal de error empaquetada con texto plano estandarizado
                     self.error_ocurrido.emit(
                         f"Pérdida de comunicación tras {tiempo_fmt} de sesión activa.\nDetalle: {str(e)}"
                     )
@@ -111,17 +113,21 @@ class TrabajadorOBD(QThread):
             self.msleep(100)
 
     # Método slot para iniciar la conexión y activar el sondeo
-    def iniciar_sondeo(self) -> bool:
+    def iniciar_sondeo(self, puerto: Optional[str] = None) -> bool:
         """
         Intenta conectar con el adaptador de hardware y registra el inicio de la sesión.
         """
         try:
-            # Verificar si el adaptador requiere inicialización de conexión
-            if not getattr(self.adaptador, "conectado", False):
-                if not self.adaptador.conectar():
-                    # Emitir error si el intento de conexión física fue rechazado
+            # Ejecución limpia de conexión evaluando la respuesta del adaptador
+            if hasattr(self.adaptador, "conectar"):
+                resultado = (
+                    self.adaptador.conectar(puerto=puerto)
+                    if puerto
+                    else self.adaptador.conectar()
+                )
+                if resultado is False:
                     self.error_ocurrido.emit(
-                        "No se pudo detectar el adaptador OBD-II. Verifique que el cable esté conectado al puerto."
+                        "No se pudo detectar el adaptador OBD-II. Verifique el puerto y las conexiones físicas."
                     )
                     return False
 
@@ -137,6 +143,12 @@ class TrabajadorOBD(QThread):
                     self.info_vehiculo_recibida.emit(info)
                 except Exception:
                     pass
+            else:
+                self.info_vehiculo_recibida.emit({
+                    "vehiculo": "Vehículo Simulado (Modo Pruebas)",
+                    "vin": "SIM-BLAR-2026-OK",
+                    "protocolo": "CAN 11bit / 500kbps (Simulado)"
+                })
 
             return True
 

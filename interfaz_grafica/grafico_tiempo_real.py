@@ -13,13 +13,14 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 from collections import deque
 # Importación de Dict, List, Optional y Tuple para anotaciones de tipo estrictas
 from typing import Dict, List, Optional, Tuple, Union
-# Importación de componentes de layout, selector y etiquetas de PySide6
+# Importación de componentes de layout, selector, lista y etiquetas de PySide6
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
     QComboBox,
+    QListView,
 )
 # Importación de QColor para la definición de colores de alta visibilidad
 from PySide6.QtGui import QColor
@@ -105,37 +106,69 @@ class GraficoTiempoRealWidget(QWidget):
 
         # Selector desplegable QComboBox para alternar el sensor mostrado en la gráfica
         self.combo_sensor = QComboBox()
-        # Estilo QSS con indicador de flecha descendente (▼) en el lado derecho
+        
+        # Aplicación del mismo CSS idéntico para garantizar coincidencia visual exacta
         self.combo_sensor.setStyleSheet("""
             QComboBox {
-                background-color: #2D2D2D;
+                background-color: #1E1E1E;
                 color: #FFFFFF;
-                border: 1px solid #444444;
-                border-radius: 4px;
-                padding: 4px 28px 4px 8px;
+                border: 2px solid #555555;
+                border-radius: 10px;
+                padding: 8px 12px;
+                font-size: 13px;
                 font-weight: bold;
+                min-width: 210px;
+            }
+            QComboBox:hover, QComboBox:focus {
+                border: 2px solid #007ACC;
+                background-color: #252525;
             }
             QComboBox::drop-down {
                 subcontrol-origin: padding;
                 subcontrol-position: top right;
-                width: 22px;
-                border-left: 1px solid #444444;
-                border-top-right-radius: 4px;
-                border-bottom-right-radius: 4px;
+                width: 30px;
+                border: none;
+                background: transparent;
             }
             QComboBox::down-arrow {
-                width: 0;
-                height: 0;
+                image: none;
+                width: 0px;
+                height: 0px;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 6px solid #FFFFFF;
+                border-top: 7px solid #007ACC;
+                background: transparent;
             }
             QComboBox QAbstractItemView {
                 background-color: #1E1E1E;
                 color: #FFFFFF;
-                selection-background-color: #007ACC;
+                border: 2px solid #007ACC;
+                border-radius: 8px;
+                padding: 4px;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                min-height: 28px;
+                padding: 6px 10px;
+                color: #FFFFFF;
+                background-color: #1E1E1E;
+                border-radius: 4px;
+            }
+            QComboBox QAbstractItemView::item:hover,
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #007ACC;
+                color: #FFFFFF;
+                font-weight: bold;
+            }
+            QComboBox:disabled {
+                background-color: #1A1A1A;
+                color: #666666;
+                border: 2px solid #333333;
             }
         """)
+
+        # Forzar el delegado QListView para garantizar resaltado azul puro en hover
+        self.combo_sensor.setView(QListView())
 
         # Carga de las opciones de sensores en el desplegable
         for clave, config in self.config_sensores.items():
@@ -259,24 +292,12 @@ class GraficoTiempoRealWidget(QWidget):
     ) -> None:
         """
         Slot receptor principal para actualizar los buffers del gráfico en tiempo real.
-
-        Soporta tres firmas de llamada:
-        1. `actualizar_grafico(dict_sensores)`: Diccionario completo emitiendo todos los sensores.
-        2. `actualizar_grafico("rpm", 1500.0)`: Sensor individual y su valor.
-        3. `actualizar_grafico(1500.0)`: Valor numérico directo atribuido al sensor activo.
-
-        Args:
-            datos_o_nombre (Union[dict, str, float, int]): Diccionario, nombre o valor numérico directo.
-            valor (Optional[float]): Valor numérico si se pasa un sensor individual por nombre.
         """
-        # Si se recibe un diccionario completo con lecturas continuas
         if isinstance(datos_o_nombre, dict):
             for clave_sensor, val_num in datos_o_nombre.items():
                 self.actualizar_sensor(clave_sensor, float(val_num))
-        # Si se pasa el par nombre/valor individual
         elif isinstance(datos_o_nombre, str) and valor is not None:
             self.actualizar_sensor(datos_o_nombre, float(valor))
-        # Si se transmite un valor numérico directo sin clave
         elif isinstance(datos_o_nombre, (float, int)):
             self.actualizar_sensor(self.sensor_activo_clave, float(datos_o_nombre))
 
@@ -284,15 +305,9 @@ class GraficoTiempoRealWidget(QWidget):
     def actualizar_sensor(self, nombre_sensor: str, valor: float) -> None:
         """
         Agrega una nueva lectura al buffer circular del sensor y redibuja si es el sensor activo.
-
-        Args:
-            nombre_sensor (str): Identificador técnico del sensor (ej. 'rpm', 'velocidad').
-            valor (float): Lectura numérica obtenida desde la ECU o el simulador.
         """
-        # Normalización de la clave del sensor a minúsculas
         clave = nombre_sensor.lower()
 
-        # Inicializar el buffer circular si es la primera lectura registrada
         if clave not in self.sensores_data:
             buf_x = deque(maxlen=self.max_puntos)
             buf_y = deque(maxlen=self.max_puntos)
@@ -300,21 +315,18 @@ class GraficoTiempoRealWidget(QWidget):
 
         buf_x, buf_y = self.sensores_data[clave]
 
-        # Inserción de la nueva lectura en el buffer circular
         buf_x.append(self.contador_x)
         buf_y.append(float(valor))
 
-        # Incrementar el contador temporal global
         self.contador_x += 1
 
-        # Si el sensor actualizado coincide con el sensor activo en pantalla, redibujar la gráfica
         if clave == self.sensor_activo_clave:
             self.curva_activa.setData(list(buf_x), list(buf_y))
             config = self.config_sensores.get(clave, {"nombre": clave, "unidad": ""})
             self._actualizar_titulo_grafico(str(config["nombre"]), valor, str(config["unidad"]))
             self._actualizar_etiqueta_estadisticas(clave, valor)
 
-    # Método alias de compatibilidad con versiones previas
+    # Método alias de compatibilidad
     def agregar_dato(self, valor: float) -> None:
         """Alias de compatibilidad para agregar lecturas a las RPM por defecto."""
         self.actualizar_sensor("rpm", valor)

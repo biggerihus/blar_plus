@@ -2,9 +2,9 @@
 Adaptador simulador para pruebas del sistema Blar Plus.
 
 Simula un dispositivo OBD-II permitiendo validar escenarios de falla física
-y correlación de física vehicular.
+(fallo de enlace inicial y desconexión física en caliente) y correlación de física vehicular.
 
-Autor: Mendivil Jimenez Jose Luis & Estrada Loaiza Rogelio
+Autor: Mendivil Jimenez Jose Luis
 Capa: Abstracción de Hardware (HAL) / Capa 4
 """
 
@@ -29,6 +29,7 @@ class AdaptadorSimulador(IAdaptadorOBD):
 
     # Constructor principal e inicialización de estados físicos y de control
     def __init__(self) -> None:
+        """Inicializa el estado lógico, contadores de fallas programadas y variables del motor."""
         # Estado booleano de la conexión lógica con el adaptador
         self.conectado: bool = False
         # Lista de códigos de falla (DTC) simulados almacenados en la ECU
@@ -52,7 +53,7 @@ class AdaptadorSimulador(IAdaptadorOBD):
         self.rpm: float = 800.0                       # Revoluciones por minuto
         self.velocidad: float = 0.0                   # Velocidad del vehículo en km/h
         self.temperatura_refrigerante: float = 25.0   # Temperatura del refrigerante en °C
-        self.posicion_acelerador: float = 0.0        # Porcentaje de apertura de la mariposa
+        self.posicion_acelerador: float = 0.0         # Porcentaje de apertura de la mariposa
         self.carga_motor: float = 15.0                # Porcentaje de carga calculada del motor
         self.maf: float = 2.5                         # Flujo de masa de aire en g/s
         self.sensor_o2: float = 0.45                  # Voltaje del sensor de oxígeno en Voltios
@@ -206,7 +207,7 @@ class AdaptadorSimulador(IAdaptadorOBD):
         # Retorno del diccionario de metadatos del vehículo
         return {
             "vehiculo": "Toyota Corolla 2.0L i-FORCE (Simulado)",
-            "vin": "4T1B11HK5LU987654",
+            "vin": "SIM-BLAR-2026-OK",
             "protocolo": "CAN Bus (ISO 15765-4 500kbps)",
         }
 
