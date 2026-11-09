@@ -3,88 +3,83 @@ Módulo de Control de Concurrencia para Blar Plus.
 
 Gestiona la comunicación asíncrona continua entre la capa de Hardware (HAL)
 y la Capa de Interfaz Gráfica (GUI) mediante hilos secundarios (QThread),
-garantizando sondeos periódicos a 10 Hz sin bloquear la interfaz.
+garantizando sondeos periódicos a 10 Hz y centralizando el cálculo de métricas de sesión.
 
 Autor: Erick Polanco Romero
 Capa: Núcleo y Controladores / Capa 2
 """
 
-# Importacion de Optional para tipado de parametros opcionales
+# Importación del módulo time para la medición real del tiempo de sesión
+import time
+# Importación de Optional para tipado de parámetros nulos
 from typing import Optional
-# Importacion de QThread para ejecucion asincrona en segundo plano y Signal para comunicacion Qt
+
+# Importación de QThread y Signal desde PySide6.QtCore
 from PySide6.QtCore import QThread, Signal
-# Importacion de la interfaz abstracta del adaptador hardware
+# Importación de la interfaz abstracta IAdaptadorOBD
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
 
 
-# Clase TrabajadorOBD que hereda de QThread para ejecutar sondeos asincronos sin congelar la GUI
+# Clase TrabajadorOBD que hereda de QThread para ejecutar sondeos asíncronos en segundo plano
 class TrabajadorOBD(QThread):
     """
     Hilo de ejecución secundario para el sondeo continuo de datos OBD-II.
 
-    Realiza lecturas periódicas a 10 Hz (cada 100 ms) en segundo plano
-    evitando el congelamiento de la GUI (Main Thread).
-
-    Señales Qt (Atributos de Clase):
-        datos_recibidos (Signal): Emite una lista de cadenas con los códigos DTC leídos.
-        sensores_recibidos (Signal): Emite un diccionario con las lecturas continuas de sensores.
-        error_ocurrido (Signal): Emite una cadena con el mensaje descriptivo del fallo.
+    Mide dinámicamente la duración de la sesión y enriquece las alertas
+    de error cuando ocurre una desconexión en cualquier adaptador (Simulado o Real).
     """
 
-    # Definicion de la señal Qt que transmite la lista de codigos DTC hacia la interfaz
+    # Señal Qt para emitir la lista de códigos DTC leídos
     datos_recibidos: Signal = Signal(list)
-
-    # Definicion de la señal Qt que transmite el diccionario con lecturas de sensores en tiempo real
+    # Señal Qt para emitir el diccionario de telemetría de sensores en vivo
     sensores_recibidos: Signal = Signal(dict)
-
-    # Definicion de la señal Qt que notifica incidencias o errores de comunicacion
+    # Señal Qt para emitir la información de identificación del vehículo
+    info_vehiculo_recibida: Signal = Signal(dict)
+    # Señal Qt para notificar errores de comunicación o desconexión
     error_ocurrido: Signal = Signal(str)
 
-    # Constructor del hilo trabajador que recibe la instancia del adaptador de hardware
+    # Constructor del trabajador asíncrono
     def __init__(self, adaptador: IAdaptadorOBD) -> None:
-        """
-        Inicializa el trabajador asíncrono con una instancia del adaptador OBD.
-
-        Args:
-            adaptador (IAdaptadorOBD): Instancia del adaptador que implementa
-                                       la interfaz de comunicación con el hardware.
-        """
-        # Invocacion del constructor base de QThread
+        # Invocación del constructor base QThread
         super().__init__()
-        # Asignacion del adaptador de hardware recibido
+        # Asignación del adaptador de hardware inyectado
         self.adaptador: IAdaptadorOBD = adaptador
-        # Inicializacion de la bandera de ejecucion del bucle continuo
+        # Bucle continuo de control del hilo
         self._ejecutando: bool = True
+        # Bandera de activación del sondeo periódico de sensores
+        self._sondeo_activo: bool = False
 
-    # Metodo principal de entrada del hilo asincrono ejecutado en segundo plano
+        # Timestamp exacto de inicio de la sesión de monitoreo (0.0 si está inactivo)
+        self._tiempo_inicio_sesion: float = 0.0
+
+    # Método privado para calcular y dar formato de texto plano a la duración de la sesión
+    def _obtener_tiempo_sesion_formateado(self) -> str:
+        """Calcula y formatea el tiempo transcurrido desde que se inició la sesión activa."""
+        # Si la sesión no ha iniciado correctamente, retornar 0 s
+        if self._tiempo_inicio_sesion <= 0:
+            return "0 s"
+        # Cálculo de los segundos totales transcurridos desde time.time()
+        segundos_totales = int(time.time() - self._tiempo_inicio_sesion)
+        # Extracción de minutos y segundos enteros
+        minutos = segundos_totales // 60
+        segundos = segundos_totales % 60
+        # Retornar formato compuesto (ej. '1 min 20 s') o simple (ej. '40 s')
+        return f"{minutos} min {segundos} s" if minutos > 0 else f"{segundos} s"
+
+    # Método principal de entrada del hilo secundario ejecutado en segundo plano
     def run(self) -> None:
         """
-        Punto de entrada del hilo secundario (se ejecuta al invocar .start()).
-
-        Establece la conexión inicial con el hardware y mantiene un bucle de
-        sondeo continuo a una frecuencia de 10 Hz (espera de 100 ms por iteración).
+        Bucle de ejecución continua a 10 Hz (cada 100 ms) mientras el sondeo esté activo.
         """
-        # Bloque try general para la captura de excepciones durante el ciclo de vida del hilo
-        try:
-            # Intento de establecimiento de conexion con el dispositivo OBD
-            if not self.adaptador.conectar():
-                # Emision de señal de error si falla la conexion inicial
-                self.error_ocurrido.emit(
-                    "No se pudo establecer conexión con el adaptador OBD."
-                )
-                # Finalizacion temprana de la ejecucion del metodo run
-                return
-
-            # Bucle de sondeo continuo en segundo plano mientras la bandera continue activa
-            while self._ejecutando:
-                # Bloque try interno para tolerar fallas de lectura sin romper el bucle principal
+        while self._ejecutando:
+            if self._sondeo_activo:
                 try:
-                    # Lectura sincrona de codigos DTC desde el adaptador
+                    # Lectura síncrona de códigos DTC desde el adaptador
                     dtcs: list[str] = self.adaptador.leer_dtc()
-                    # Transmision asincrona de los codigos DTC a la GUI mediante la señal Qt
+                    # Emisión asíncrona de códigos hacia la GUI
                     self.datos_recibidos.emit(dtcs)
 
-                    # Lectura sincrona de parametros de los 10 sensores OBD-II soportados
+                    # Lectura síncrona del bloque de 10 sensores OBD-II
                     sensores: dict[str, float] = {
                         "rpm": self.adaptador.leer_pid("010C"),
                         "velocidad": self.adaptador.leer_pid("010D"),
@@ -98,52 +93,84 @@ class TrabajadorOBD(QThread):
                         "presion_map": self.adaptador.leer_pid("010B"),
                     }
 
-                    # Emision de señal de telemetria multisensores en tiempo real a la GUI
+                    # Emisión asíncrona del diccionario de telemetría hacia la GUI
                     self.sensores_recibidos.emit(sensores)
 
-                # Captura de excepciones producidas durante una iteracion de lectura
                 except Exception as e:
-                    # Notificacion del error especifico a la GUI mediante la señal Qt
-                    self.error_ocurrido.emit(f"Error durante la lectura OBD: {str(e)}")
+                    # Pausar inmediatamente el sondeo ante cualquier excepción de comunicación
+                    self._sondeo_activo = False
+                    # Obtener la duración real calculada de la sesión
+                    tiempo_fmt = self._obtener_tiempo_sesion_formateado()
 
-                # Pausa asincrona de 100 milisegundos en el hilo secundario para lograr sondeo a 10 Hz
-                self.msleep(100)
+                    # Emitir señal de error empaquetada con texto plano estandarizado con \n
+                    self.error_ocurrido.emit(
+                        f"Pérdida de comunicación tras {tiempo_fmt} de sesión activa.\nDetalle: {str(e)}"
+                    )
 
-        # Captura de fallos criticos a nivel de infraestructura del hilo
-        except Exception as e:
-            # Emision del mensaje de falla critica final
-            self.error_ocurrido.emit(f"Fallo crítico en el hilo de control: {str(e)}")
+            # Pausa asíncrona de 100 ms para mantener frecuencia de sondeo de 10 Hz
+            self.msleep(100)
 
-    # Metodo para solicitar la limpieza de DTCs al adaptador de hardware en segundo plano
-    def solicitar_limpieza_dtc(self, codigos: Optional[list[str]] = None) -> bool:
+    # Método slot para iniciar la conexión y activar el sondeo
+    def iniciar_sondeo(self) -> bool:
         """
-        Solicita al adaptador de hardware la eliminación de los códigos DTC.
-
-        Args:
-            codigos (Optional[list[str]]): Lista de códigos a borrar o None para borrado completo.
-
-        Returns:
-            bool: True si la eliminación fue confirmada por el hardware.
+        Intenta conectar con el adaptador de hardware y registra el inicio de la sesión.
         """
         try:
-            # Ejecución de la limpieza directamente en el adaptador de hardware
-            return self.adaptador.limpiar_dtc(codigos)
+            # Verificar si el adaptador requiere inicialización de conexión
+            if not getattr(self.adaptador, "conectado", False):
+                if not self.adaptador.conectar():
+                    # Emitir error si el intento de conexión física fue rechazado
+                    self.error_ocurrido.emit(
+                        "No se pudo detectar el adaptador OBD-II. Verifique que el cable esté conectado al puerto."
+                    )
+                    return False
+
+            # Registrar el timestamp de inicio de la sesión activa
+            self._tiempo_inicio_sesion = time.time()
+            # Activar la bandera de sondeo continuo
+            self._sondeo_activo = True
+
+            # Consultar y emitir metadatos del vehículo conectado si el adaptador lo soporta
+            if hasattr(self.adaptador, "obtener_info_vehiculo"):
+                try:
+                    info = self.adaptador.obtener_info_vehiculo()
+                    self.info_vehiculo_recibida.emit(info)
+                except Exception:
+                    pass
+
+            return True
+
         except Exception as e:
-            # Notificación del error en caso de fallo durante el borrado
-            self.error_ocurrido.emit(f"Error al borrar códigos DTC: {str(e)}")
+            # Emitir error en caso de fallo crítico al iniciar el canal
+            self.error_ocurrido.emit(f"Fallo al conectar con el hardware: {str(e)}")
             return False
 
-    # Metodo para detener de forma segura el hilo asincrono
-    def detener(self) -> None:
-        """
-        Finaliza de manera limpia y segura la ejecución del hilo secundario.
+    # Método slot para pausar el sondeo y liberar recursos de hardware
+    def pausar_sondeo(self) -> None:
+        """Desactiva la bandera de sondeo y restablece el reloj de la sesión."""
+        self._sondeo_activo = False
+        self._tiempo_inicio_sesion = 0.0
+        try:
+            self.adaptador.desconectar()
+        except Exception:
+            pass
 
-        Desactiva la bandera de control del bucle `while`, solicita la detención
-        del event-loop de Qt y espera la liberación de recursos del hilo.
-        """
-        # Desactivacion de la bandera de control del bucle while
+    # Método para solicitar el borrado de códigos DTC en segundo plano
+    def solicitar_limpieza_dtc(self, codigos: Optional[list[str]] = None) -> bool:
+        """Solicita la eliminación de DTCs al adaptador registrando posibles errores."""
+        try:
+            return self.adaptador.limpiar_dtc(codigos)
+        except Exception as e:
+            tiempo_fmt = self._obtener_tiempo_sesion_formateado()
+            self.error_ocurrido.emit(
+                f"Error al borrar códigos DTC tras {tiempo_fmt} de uso: {str(e)}"
+            )
+            return False
+
+    # Método para detener limpia y de forma segura el hilo secundario QThread
+    def detener(self) -> None:
+        """Finaliza la ejecución del bucle secundario y espera su cierre completo."""
+        self.pausar_sondeo()
         self._ejecutando = False
-        # Solicitud de detencion del bucle de eventos interno de QThread
         self.quit()
-        # Bloqueo síncrono hasta que el hilo en segundo plano haya terminado completamente
         self.wait()

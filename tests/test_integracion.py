@@ -8,47 +8,54 @@ Autor: Erick Polanco Romero
 Capa: Pruebas de Integración / Control y GUI
 """
 
-# Importacion del marco de pruebas pytest
+# Importación del marco de pruebas pytest
 import pytest
-# Importacion de QtBot para interceptar señales asíncronas y manipular la interfaz gráfica
+# Importación de QtBot para la interceptación de señales y manipulación visual
 from pytestqt.qtbot import QtBot
 
-# Importacion del adaptador simulador de la Capa de Hardware
+# Importación de componentes de las tres capas
 from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
-# Importacion del hilo trabajador asíncrono de la Capa de Control
 from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
-# Importacion de la ventana principal de la Capa de Interfaz Gráfica
 from interfaz_grafica.ventana_principal import VentanaPrincipal
 
 
-# Funcion de prueba de integracion end-to-end entre el simulador, el hilo y la GUI
+# Prueba de integración End-to-End entre el adaptador, el hilo asíncrono y la ventana gráfica
 def test_flujo_completo_simulador_gui(qtbot: QtBot) -> None:
     """
-    Verifica que las lecturas del simulador atraviesen el hilo asíncrono
-    y actualicen automáticamente la tabla de la interfaz gráfica.
+    Verifica que las lecturas emitidas por el simulador atraviesen el hilo asíncrono
+    y actualicen automáticamente la tabla de diagnósticos en la interfaz gráfica.
     """
-    # Instanciacion del adaptador de hardware en modo simulacion
+    # Instanciación del adaptador simulador
     adaptador = AdaptadorSimulador()
-    # Instanciacion de la ventana principal de la interfaz de usuario
+    # Desactivar secuencia de fallos para permitir conexión directa en el test de integración
+    adaptador.modo_secuencia_fallos = False
+
+    # Instanciación de la ventana principal de la GUI y registro en qtbot
     ventana = VentanaPrincipal()
-    # Registro del widget principal en el asistente de pruebas QtBot
     qtbot.addWidget(ventana)
 
-    # Instanciacion del hilo secundario de control inyectando el adaptador simulado
+    # Instanciación del hilo secundario de control
     trabajador = TrabajadorOBD(adaptador=adaptador)
+    ventana.set_trabajador_obd(trabajador)
 
-    # Establecimiento del enlace de señales Qt entre el hilo secundario y la ventana principal
+    # Establecer explícitamente el estado de conexión de la interfaz en True para procesar eventos
+    ventana.estadoConexion = True
+
+    # Conectar señal de datos crudos al slot receptor de la ventana
     trabajador.datos_recibidos.connect(ventana.recibir_dtcs_asincronos)
 
-    # Espera asíncrona de la emision de la señal datos_recibidos con tiempo limite de 3000 ms
+    # Espera asíncrona de la emisión de datos a través de la señal Qt
     with qtbot.waitSignal(trabajador.datos_recibidos, timeout=3000):
-        # Arranque de la ejecucion en segundo plano del hilo trabajador
+        # Iniciar la sesión de sondeo y el hilo de ejecución en segundo plano
+        trabajador.iniciar_sondeo()
         trabajador.start()
 
-    # Verificacion de que la tabla de diagnostico en la GUI haya renderizado los registros
+    # Verificación de que la tabla de diagnósticos en la GUI contenga filas renderizadas (> 0)
     assert ventana.lista_dtc_widget.tabla.rowCount() > 0
 
-    # Invocacion de la detencion limpia del hilo trabajador secundario
+    # Invocación de la detención limpia del hilo secundario
     trabajador.detener()
-    # Aseveracion de confirmacion de que el hilo ha dejado de ejecutarse
+    # Espera sincrónica de QtBot para asegurar la liberación completa del QThread antes de destruir los widgets
+    qtbot.waitUntil(lambda: not trabajador.isRunning(), timeout=2000)
+    # Aserción final de confirmación de detención del hilo
     assert not trabajador.isRunning()
