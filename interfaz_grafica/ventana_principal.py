@@ -1,18 +1,18 @@
 """
 Módulo de la Ventana Principal del Sistema Blar Plus.
 
-Coordina la interfaz gráfica central integrando los módulos de barra de estado,
-alternancia de vistas dinámicas (Conductor/Mecánico) y la visualización de datos.
+Centraliza el flujo de la aplicación ordenando las pantallas de Conductor y Mecánico,
+administrando el estado de la conexión e integrando los módulos gráficos.
 
 Autor: Estrada Loaiza Rogelio
 """
 
 import sys
-from typing import Optional
-from PySide6.QtCore import Qt
+from typing import List, Optional
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QDialog,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -23,53 +23,61 @@ from PySide6.QtWidgets import (
 )
 
 from interfaz_grafica.barra_estado import BarraEstadoWidget
+from interfaz_grafica.grafico_tiempo_real import GraficoTiempoRealWidget
 from interfaz_grafica.lista_dtc import ListaDTCWidget
+from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
+from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
 
 
 class VentanaPrincipal(QMainWindow):
     """
-    Ventana principal de la aplicación que administra los flujos de pantalla.
-
-    Utiliza un `QStackedWidget` para alternar entre el Panel de Conductor
-    y el Panel Técnico de Mecánico.
+    Ventana principal del sistema que coordina vistas, barras de estado y eventos.
 
     Atributos:
-        estadoConexion (bool): Almacena la condición actual de la conexión OBD.
-        barra_estado (BarraEstadoWidget): Widget reutilizable del LED de estado.
-        stacked_vistas (QStackedWidget): Contenedor multiventana de la GUI.
-        widget_dtc (ListaDTCWidget): Tabla de diagnósticos dentro de la vista técnico.
+        estadoConexion (bool): Bandera del estado actual de enlace.
+        controlador_reporte (ControladorReporte): Instancia de la Capa de Control.
+        barra_estado_widget (BarraEstadoWidget): Widget del LED indicador.
+        stacked_vistas (QStackedWidget): Contenedor multiventana.
+        grafico_widget (GraficoTiempoRealWidget): Gráfico técnico de sensores.
+        lista_dtc_widget (ListaDTCWidget): Tabla de diagnósticos DTC.
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
-        """Inicializa las configuraciones globales de la ventana principal."""
+        """
+        Inicializa la ventana principal y sus propiedades base.
+
+        Args:
+            parent (Optional[QWidget]): Widget padre opcional en la jerarquía.
+        """
         super().__init__(parent)
         self.estadoConexion: bool = False
+        self.controlador_reporte: ControladorReporte = ControladorReporte()
 
-        self.setWindowTitle("Ventana Principal - Sistema de Monitoreo Vehicular")
-        self.resize(950, 600)
-        self.iniciar()
+        self.setWindowTitle("Sistema de Monitoreo Vehicular - Blar Plus")
+        self.resize(1100, 800)
+        self.iniciar_interfaz()
 
-    def iniciar(self) -> None:
-        """Construye y ensambla todos los módulos visuales de la ventana principal."""
+    def iniciar_interfaz(self) -> None:
+        """Ensambla el diseño general integrando los paneles y selectores."""
         widget_central = QWidget()
         self.setCentralWidget(widget_central)
         layout_principal = QVBoxLayout(widget_central)
 
-        # --- Seccion 1: Barra Superior con BarraEstadoWidget ---
         layout_superior = QHBoxLayout()
-        self.barra_estado = BarraEstadoWidget()
+        self.lbl_estado_texto = QLabel("Estado de Conexión: Desconectado")
+        self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
 
-        btn_conectar = QPushButton("Conectar Equipo")
+        btn_conectar = QPushButton("Conectar / Desconectar Equipo")
         btn_conectar.setStyleSheet(
             "color: black; font-weight: bold; background-color: #f0f0f0; border: 1px solid #ccc; padding: 6px; border-radius: 4px;"
         )
-        btn_conectar.clicked.connect(self.conectarEquipo)
+        btn_conectar.clicked.connect(self.alternar_conexion)
 
-        layout_superior.addWidget(self.barra_estado)
+        layout_superior.addWidget(self.lbl_estado_texto)
+        layout_superior.addStretch()
         layout_superior.addWidget(btn_conectar)
         layout_principal.addLayout(layout_superior)
 
-        # --- Seccion 2: Selector Responsivo de Vista ---
         layout_selector = QHBoxLayout()
         lbl_selector = QLabel("Selector de Vista:")
         lbl_selector.setStyleSheet("font-weight: bold;")
@@ -83,42 +91,16 @@ class VentanaPrincipal(QMainWindow):
         layout_selector.addStretch()
         layout_principal.addLayout(layout_selector)
 
-        # --- Seccion 3: QStackedWidget (Pila de Pantallas) ---
         self.stacked_vistas = QStackedWidget()
-        self.stacked_vistas.addWidget(self.crear_vista_conductor())  # Índice 0
-        self.stacked_vistas.addWidget(self.crear_vista_mecanico())   # Índice 1
-
+        self.stacked_vistas.addWidget(self.crear_vista_conductor())
+        self.stacked_vistas.addWidget(self.crear_vista_mecanico())
         layout_principal.addWidget(self.stacked_vistas)
 
-        # Sincronización inicial del resumen rápido
-        self.mostrarResultado()
-
-    def conectarEquipo(self) -> None:
-        """Invierte el estado de la conexión e invoca la actualización del widget de estado."""
-        self.estadoConexion = not self.estadoConexion
-        if self.estadoConexion:
-            self.barra_estado.actualizar_estado(True, "Conectado")
-        else:
-            self.barra_estado.actualizar_estado(False, "Desconectado")
-        self.mostrarResultado()
-
-    def mostrarResultado(self) -> None:
-        """Actualiza el texto descriptivo en el resumen dinámico."""
-        if self.estadoConexion:
-            self.lbl_resumen.setText(
-                "Resumen rápido: Sistema sincronizado. Todos los parámetros son estables."
-            )
-        else:
-            self.lbl_resumen.setText(
-                "Resumen rápido: Advertencia - Equipo desconectado. No se reciben datos."
-            )
-
-    def cambiar_vista(self, index: int) -> None:
-        """Modifica el índice visible dentro del QStackedWidget."""
-        self.stacked_vistas.setCurrentIndex(index)
+        self.barra_estado_widget = BarraEstadoWidget()
+        layout_principal.addWidget(self.barra_estado_widget)
 
     def crear_vista_conductor(self) -> QWidget:
-        """Construye y retorna el panel adaptado para la vista rápida de un conductor."""
+        """Construye y devuelve el panel visual diseñado para la vista del conductor."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
@@ -126,7 +108,6 @@ class VentanaPrincipal(QMainWindow):
         lbl_titulo.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
         layout.addWidget(lbl_titulo)
 
-        # Contenedores de velocímetro y temperatura
         layout_indicadores = QHBoxLayout()
         self.btn_vel = QPushButton("Velocidad\n0 km/h")
         self.btn_vel.setStyleSheet(
@@ -142,7 +123,7 @@ class VentanaPrincipal(QMainWindow):
         layout_indicadores.addWidget(self.btn_temp)
         layout.addLayout(layout_indicadores)
 
-        self.lbl_resumen = QLabel("")
+        self.lbl_resumen = QLabel("Resumen rápido: Sistema desconectado.")
         self.lbl_resumen.setStyleSheet(
             "font-size: 13px; background-color: #fff3cd; padding: 10px; border-radius: 6px; border: 1px solid #ffeeba; color: black;"
         )
@@ -152,19 +133,67 @@ class VentanaPrincipal(QMainWindow):
         return widget
 
     def crear_vista_mecanico(self) -> QWidget:
-        """Construye e integra la vista avanzada integrando el componente `ListaDTCWidget`."""
+        """Construye e integra la vista técnica avanzada con gráficos y tabla de fallas."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        lbl_titulo = QLabel("Panel Técnico - Diagnóstico Avanzado")
+        lbl_titulo = QLabel("Panel Técnico - Diagnóstico Avanzado y Sensores")
         lbl_titulo.setStyleSheet("font-size: 15px; font-weight: bold; color: #333;")
         layout.addWidget(lbl_titulo)
 
-        # Integración limpia del widget de tabla DTC refactorizado
-        self.widget_dtc = ListaDTCWidget()
-        layout.addWidget(self.widget_dtc)
+        self.grafico_widget = GraficoTiempoRealWidget()
+        layout.addWidget(self.grafico_widget)
+
+        self.lista_dtc_widget = ListaDTCWidget()
+        layout.addWidget(self.lista_dtc_widget)
+
+        btn_borrar = QPushButton("Borrar Códigos de Diagnóstico (DTC)")
+        btn_borrar.setStyleSheet(
+            "background-color: #d9534f; color: white; font-weight: bold; padding: 8px; border-radius: 4px;"
+        )
+        btn_borrar.clicked.connect(self.abrir_dialogo_borrado)
+        layout.addWidget(btn_borrar)
 
         return widget
+
+    def alternar_conexion(self) -> None:
+        """Alterna el estado de la conexión e invoca las actualizaciones visuales."""
+        self.estadoConexion = not self.estadoConexion
+        if self.estadoConexion:
+            self.lbl_estado_texto.setText("Estado de Conexión: Conectado")
+            self.lbl_estado_texto.setStyleSheet("color: #5cb85c; font-weight: bold;")
+            self.barra_estado_widget.actualizar_estado(True, "Conectado a la ECU correctamente.")
+            self.lbl_resumen.setText("Resumen rápido: Sistema sincronizado y estable.")
+        else:
+            self.lbl_estado_texto.setText("Estado de Conexión: Desconectado")
+            self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
+            self.barra_estado_widget.actualizar_estado(False, "Desconectado del vehículo.")
+            self.lbl_resumen.setText("Resumen rápido: Advertencia - Equipo desconectado.")
+
+    def recibir_dtcs_asincronos(self, dtcs_raw: List[str]) -> None:
+        """
+        Slot receptor para conectar las señales de TrabajadorOBD con la interfaz gráfica.
+
+        Args:
+            dtcs_raw (List[str]): Lista de cadenas crudas DTC enviadas por el hilo secundario.
+        """
+        dtos: List[DTCDTO] = self.controlador_reporte.procesar_dtcs_raw(dtcs_raw)
+        self.lista_dtc_widget.cargar_reportes(dtos)
+
+    def cambiar_vista(self, index: int) -> None:
+        """Cambia el panel visible según el menú desplegable."""
+        self.stacked_vistas.setCurrentIndex(index)
+
+    def abrir_dialogo_borrado(self) -> None:
+        """Abre la ventana modal de seguridad para autorizar el borrado de la memoria."""
+        dialogo = DialogoConfirmacion(self)
+        resultado = dialogo.exec()
+
+        if resultado == QDialog.DialogCode.Accepted:
+            self.barra_estado_widget.actualizar_estado(True, "Códigos DTC borrados de la memoria con éxito.")
+            self.lista_dtc_widget.cargar_reportes([])
+        else:
+            self.barra_estado_widget.actualizar_estado(True, "Operación de borrado cancelada.")
 
 
 if __name__ == "__main__":
