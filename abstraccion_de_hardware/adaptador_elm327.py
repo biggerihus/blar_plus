@@ -1,3 +1,8 @@
+"""
+Modulo Adaptador ELM327
+Autor: Mendivil Jimenez Jose Luis
+Capa: Abstraccion de Hardware (HAL) / Capa 4
+"""
 # Este archivo permite que Python se comunique con un adaptador ELM327
 # conectado al vehículo mediante un puerto USB. El adaptador ELM327 funciona como intermediario:
 # Python -> Puerto USB -> ELM327 -> Computadora del vehículo (ECU)

@@ -1,3 +1,9 @@
+"""
+Suite de Pruebas Unitarias para la Capa de Abstracción de Hardware (HAL).
+
+Autor: Mendivil Jimenez Jose Luis
+Capa: Pruebas Unitarias - Abstracción de Hardware / Capa 4
+"""
 # Estas pruebas sirven para comprobar que el simulador funciona correctamente.
 # Por ejemplo: conectarse, leer fallas, leer sensores y borrar códigos.
 

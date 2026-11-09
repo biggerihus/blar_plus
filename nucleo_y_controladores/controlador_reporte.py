@@ -6,12 +6,16 @@ transformar lecturas crudas en Objetos de Transferencia de Datos (DTOs)
 y estructurar reportes completos para la capa de presentación.
 
 Autor: Erick Polanco Romero
+Capa: Núcleo y Controladores / Capa 2
 """
 
+# Importacion del decorador dataclass para la estructuracion automatica de objetos de datos
 from dataclasses import dataclass
+# Importacion de tipos Any, Dict y List para las anotaciones explicitas de tipo
 from typing import Any, Dict, List
 
 
+# Definicion de la clase DTO para transferir datos estructurados de DTC a la interfaz grafica
 @dataclass
 class DTCDTO:
     """
@@ -25,13 +29,19 @@ class DTCDTO:
         solucion (str): Recomendación o paso correctivo sugerido.
     """
 
+    # Codigo alfanumerico estandar OBD-II
     codigo: str
+    # Categoria o subsistema afectado en el vehiculo
     categoria: str
+    # Nivel de gravedad o severidad de la falla
     gravedad: str
+    # Descripcion tecnica detallada de la falla
     descripcion: str
+    # Sugerencia de reparacion o diagnostico
     solucion: str
 
 
+# Clase principal de control encargada de transformar tramas y armar reportes
 class ControladorReporte:
     """
     Gestiona la transformación de datos crudos a DTOs y la generación de reportes.
@@ -40,20 +50,23 @@ class ControladorReporte:
     y los widgets visuales de la interfaz de usuario.
     """
 
-    # Catálogo en memoria para el mapeo de códigos crudos a objetos DTO enriquecidos
+    # Diccionario estatico de catalogo de codigos DTC con sus metadatos asociados
     CATALOGO_DTC: Dict[str, Dict[str, str]] = {
+        # Definicion de metadatos para el codigo de falla P0300
         "P0300": {
             "categoria": "Encendido",
             "gravedad": "Alta",
             "descripcion": "Fallo de encendido aleatorio en múltiples cilindros.",
             "solucion": "Revisar bujías, bobinas y presión de combustible.",
         },
+        # Definicion de metadatos para el codigo de falla P0113
         "P0113": {
             "categoria": "Admisión",
             "gravedad": "Media",
             "descripcion": "Sensor de temperatura del aire de admisión (IAT) voltaje alto.",
             "solucion": "Verificar cableado y conector del sensor IAT.",
         },
+        # Definicion de metadatos para el codigo de falla P0420
         "P0420": {
             "categoria": "Emisiones",
             "gravedad": "Baja",
@@ -62,10 +75,13 @@ class ControladorReporte:
         },
     }
 
+    # Inicializador de la clase controlador
     def __init__(self) -> None:
         """Inicializa el controlador y la lista en memoria del historial de diagnósticos."""
+        # Inicializacion de la lista vacia para guardar el historial de reportes
         self._historial_reportes: List[Dict[str, Any]] = []
 
+    # Metodo para procesar una lista de cadenas de codigos crudos y retornar objetos DTCDTO
     def procesar_dtcs_raw(self, dtcs_raw: List[str]) -> List[DTCDTO]:
         """
         Transforma una lista de cadenas de texto crudas en Objetos DTCDTO estructurados.
@@ -79,10 +95,12 @@ class ControladorReporte:
         Returns:
             List[DTCDTO]: Colección de objetos DTO listos para la GUI (`ListaDTCWidget`).
         """
+        # Creacion de la lista vacia receptora de objetos DTO
         dtos: List[DTCDTO] = []
 
+        # Recorrido de cada codigo alfanumerico crudo en la lista recibida
         for codigo in dtcs_raw:
-            # Busca los metadatos del código o aplica la plantilla por defecto si no existe
+            # Consulta en el catalogo local con diccionario de respaldo por defecto si no existe
             info = self.CATALOGO_DTC.get(
                 codigo,
                 {
@@ -93,7 +111,7 @@ class ControladorReporte:
                 },
             )
 
-            # Construcción de la instancia DTO
+            # Instanciacion del objeto DTO con la informacion recuperada o por defecto
             dto = DTCDTO(
                 codigo=codigo,
                 categoria=info["categoria"],
@@ -101,10 +119,13 @@ class ControladorReporte:
                 descripcion=info["descripcion"],
                 solucion=info["solucion"],
             )
+            # Adicion del objeto DTO a la lista de salida
             dtos.append(dto)
 
+        # Devolucion del conjunto de DTOs construidos
         return dtos
 
+    # Metodo para estructurar un resumen general del reporte de fallas
     def generar_reporte(self, dtcs: List[str]) -> Dict[str, Any]:
         """
         Genera una estructura formal de reporte a partir de una lista de códigos DTC.
@@ -115,17 +136,22 @@ class ControladorReporte:
         Returns:
             Dict[str, Any]: Resumen estructurado con el estado general y total de fallas.
         """
+        # Evaluacion ternaria para determinar el estado de severidad del vehiculo
         estado_severidad: str = "Crítico" if dtcs else "Sin Fallas"
 
+        # Construccion del diccionario con las metricas generales del reporte
         reporte: Dict[str, Any] = {
             "total_fallas": len(dtcs),
             "codigos": dtcs,
             "estado": estado_severidad,
         }
 
+        # Registro del reporte generado en la lista de historial
         self._historial_reportes.append(reporte)
+        # Retorno del diccionario del reporte
         return reporte
 
+    # Metodo para consultar las copias de los reportes acumulados
     def obtener_historial(self) -> List[Dict[str, Any]]:
         """
         Devuelve una copia del historial de reportes acumulados en la sesión.
@@ -133,4 +159,5 @@ class ControladorReporte:
         Returns:
             List[Dict[str, Any]]: Lista de diccionarios de reportes generados.
         """
+        # Devolucion de una copia de la lista de historial para evitar mutaciones externas
         return list(self._historial_reportes)

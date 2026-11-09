@@ -1,32 +1,33 @@
-
 """
 Adaptador simulador para pruebas del sistema Blar Plus.
 Permite simular un escáner OBD-II sin conectar un vehículo real.
+Autor: Mendivil Jimenez Jose Luis
+Capa: Abstraccion de Hardware (HAL) / Capa 4
 """
 
-import random  #genera números aleatorios para simular los sensores.
-import time    #permite simular el pequeño retraso de conexión.
+# Importacion del modulo random para generar numeros aleatorios que simulan lecturas de sensores
+import random
+# Importacion del modulo time para simular retardos de red y tiempo de respuesta en la conexion
+import time
 
-
-# Importamos nuestra interfaz abstracta, creada en el módulo i_adaptador_obd.
+# Importacion de la interfaz abstracta IAdaptadorOBD para cumplir el contrato de hardware
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
 
-# AdaptadorSimulador hereda de IAdaptadorOBD.
+# Clase AdaptadorSimulador que hereda de IAdaptadorOBD para simular la ECU en entorno de desarrollo
 class AdaptadorSimulador(IAdaptadorOBD):
     """
-        Simula la conexión y lectura de datos de un vehículo mediante OBD-II.
+    Simula la conexión y lectura de datos de un vehículo mediante OBD-II.
     """
 
-    # constructor
+    # Constructor e inicializador de atributos del simulador
     def __init__(self) -> None:
-        # Cuando creamos el simulador, comienza desconectado.
+        # Estado inicial del simulador configurado como desconectado
         self.conectado: bool = False
-
-        # tres codigos de falla ficticios.
+        # Lista privada de codigos de falla ficticios iniciales
         self._dtcs_simulados: list[str] = ['P0300', 'P0171', 'P0420']
 
-
-    def conectar(self, puerto: str, baudrate: int = 38400) -> bool:
+    # Metodo para simular la conexion al puerto serie del adaptador
+    def conectar(self, puerto: str = "SIMULADOR", baudrate: int = 38400) -> bool:
         """
         Simula la conexión a un dispositivo OBD-II.
 
@@ -34,16 +35,22 @@ class AdaptadorSimulador(IAdaptadorOBD):
             puerto: Puerto serie del dispositivo.
             baudrate: Velocidad de comunicación.
         """
-        time.sleep(0.1)  # Simula tiempo de conexión
-        self.conectado = True  # y cambiamos el estado de conexión.
-        return True  # Devuelve True para indicar que la conexión fue exitosa.
+        # Simula el retardo temporal que toma establecer la comunicacion serie
+        time.sleep(0.1)
+        # Cambia la bandera de estado a conectado
+        self.conectado = True
+        # Devuelve True confirmando el exito de la conexion
+        return True
 
+    # Metodo para simular la desconexion del dispositivo
     def desconectar(self) -> None:
         """
         Simula la desconexión del dispositivo OBD-II.
         """
+        # Cambia la bandera de estado a desconectado
         self.conectado = False
 
+    # Metodo para simular la lectura de codigos DTC almacenados
     def leer_dtc(self) -> list[str]:
         """
         Simula la lectura de códigos de diagnóstico (DTC) del vehículo.
@@ -51,11 +58,14 @@ class AdaptadorSimulador(IAdaptadorOBD):
         Returns:
             Lista de códigos DTC simulados.
         """
-        
+        # Verificacion del estado de conexion antes de realizar la lectura
         if not self.conectado:
+            # Lanzamiento de excepcion de ejecucion si el simulador no esta conectado
             raise RuntimeError("--Desde el simulador-- No conectado al dispositivo OBD-II.")
+        # Retorno de una copia independiente de la lista de codigos simulados
         return self._dtcs_simulados.copy()
 
+    # Metodo para simular el borrado de codigos DTC de la memoria de la ECU
     def limpiar_dtc(self) -> bool:
         """
         Simula la limpieza de códigos de diagnóstico (DTC) del vehículo.
@@ -63,12 +73,16 @@ class AdaptadorSimulador(IAdaptadorOBD):
         Returns:
             True si los códigos DTC fueron "limpiados" correctamente.
         """
+        # Verificacion del estado de conexion antes de borrar
         if not self.conectado:
+            # Lanzamiento de excepcion si no existe conexion activa
             raise RuntimeError("--Desde el simulador-- No conectado al dispositivo OBD-II.")
-        self._dtcs_simulados = []  # Limpia los códigos de falla simulados
+        # Vaciado de la lista de codigos simulados para simular el borrado
+        self._dtcs_simulados = []
+        # Retorno de confirmacion exitosa
         return True
 
-
+    # Metodo para simular la consulta de lecturas de sensores mediante su PID OBD-II
     def leer_pid(self, pid: str) -> float:
         """
         Simula la lectura de un parámetro del vehículo mediante su PID.
@@ -77,19 +91,22 @@ class AdaptadorSimulador(IAdaptadorOBD):
         Args:
             pid: Identificador del parámetro OBD-II.
         """
+        # Verificacion previa del estado de conexion
         if not self.conectado:
+            # Lanzamiento de excepcion si se intenta leer sin estar conectado
             raise RuntimeError("--Desde el simulador-- El dispositivo OBD-II no está conectado.")
 
-        if pid == "010C":  # RPM del motor
-            return round(random.uniform(800.0 , 3000.0), 2) # devuelve un valor aleatorio entre 800 y 3000 RPM
-        
-        elif pid == "010D":  # Velocidad del vehículo
-            return round(random.uniform(0.0, 120.0), 2)  # devuelve un valor aleatorio entre 0 y 120 km/h
+        # Evaluacion del PID solicitado para revoluciones del motor
+        if pid == "010C":
+            # Retorno de valor aleatorio flotante entre 800.0 y 3000.0 RPM redondeado a 2 decimales
+            return round(random.uniform(800.0, 3000.0), 2)
 
+        # Evaluacion del PID solicitado para velocidad del vehiculo
+        elif pid == "010D":
+            # Retorno de valor aleatorio flotante entre 0.0 y 120.0 km/h redondeado a 2 decimales
+            return round(random.uniform(0.0, 120.0), 2)
+
+        # Caso por defecto si se solicita un PID no soportado
         else:
+            # Lanzamiento de excepcion indicando que el PID no esta implementado en el simulador
             raise ValueError(f"--Desde el simulador-- PID no soportado: {pid}")
-
-        
-        
-    
-    

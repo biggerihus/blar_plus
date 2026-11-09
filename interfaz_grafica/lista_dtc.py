@@ -1,10 +1,17 @@
 """
+
 Módulo de Presentación de Diagnósticos DTC para Blar Plus.
 
+
+
 Construye una tabla dinámica interactiva encargada de presentar los códigos de falla (DTC),
+
 clasificándolos visualmente con patrones de color condicional en función de su severidad.
 
+
+
 Autor: Estrada Loaiza Rogelio
+
 """
 
 from typing import List, Optional, Union
@@ -22,14 +29,23 @@ from nucleo_y_controladores.controlador_reporte import DTCDTO
 
 class DTCReporte:
     """
+
     Estructura de datos para compatibilidad directa con reportes DTC.
 
+
+
     Atributos:
+
         codigo (str): Identificador estándar del fallo (ej. 'P0300').
+
         categoria (str): Área del vehículo afectada (ej. 'Encendido').
+
         gravedad (str): Evaluación de impacto ('Alta', 'Media', 'Baja').
+
         descripcion (str): Resumen técnico de la falla.
+
         solucion (str): Acción de mantenimiento sugerida.
+
     """
 
     def __init__(
@@ -49,18 +65,27 @@ class DTCReporte:
 
 class ListaDTCWidget(QWidget):
     """
+
     Widget de tabla responsiva para la inspección detallada de códigos DTC.
 
+
+
     Atributos:
+
         tabla (QTableWidget): Componente que despliega la información organizada en 5 columnas.
+
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
+
         Inicializa el widget y llama a la configuración de la tabla.
 
+
         Args:
+
             parent (Optional[QWidget]): Widget contenedor padre.
+
         """
         super().__init__(parent)
         self.inicializar_interfaz()
@@ -90,13 +115,20 @@ class ListaDTCWidget(QWidget):
 
     def cargar_reportes(self, reportes: List[Union[DTCReporte, DTCDTO]]) -> None:
         """
+
         Limpia la tabla y carga la lista de reportes aplicando formato de color según la gravedad.
 
+
+
         - Alta: Fondo rojo claro (#f8d7da), texto rojo oscuro (#721c24).
+
         - Media: Fondo amarillo claro (#fff3cd), texto marrón (#856404).
+
         - Baja: Fondo verde claro (#d4edda), texto verde oscuro (#155724).
 
+
         Args:
+
             reportes (List[Union[DTCReporte, DTCDTO]]): Colección de fallas a renderizar.
         """
         self.tabla.setRowCount(0)  # Limpieza de registros previos

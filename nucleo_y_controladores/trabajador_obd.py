@@ -6,12 +6,16 @@ y la Capa de Interfaz Gráfica (GUI) mediante hilos secundarios (QThread),
 garantizando sondeos periódicos a 10 Hz sin bloquear la interfaz.
 
 Autor: Erick Polanco Romero
+Capa: Núcleo y Controladores / Capa 2
 """
 
+# Importacion de QThread para ejecucion asincrona en segundo plano y Signal para comunicacion Qt
 from PySide6.QtCore import QThread, Signal
+# Importacion de la interfaz abstracta del adaptador hardware
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
 
 
+# Clase TrabajadorOBD que hereda de QThread para ejecutar sondeos asincronos sin congelar la GUI
 class TrabajadorOBD(QThread):
     """
     Hilo de ejecución secundario para el sondeo continuo de datos OBD-II.
@@ -24,14 +28,13 @@ class TrabajadorOBD(QThread):
         error_ocurrido (Signal): Emite una cadena con el mensaje descriptivo del fallo.
     """
 
-    # Señal emitida al obtener exitosamente la lista de códigos DTC en cada ciclo.
-    # Payload: list[str] -> Ej. ["P0300", "P0171"]
+    # Definicion de la señal Qt que transmite la lista de codigos DTC hacia la interfaz
     datos_recibidos: Signal = Signal(list)
 
-    # Señal emitida ante fallos de conexión o excepciones durante la lectura.
-    # Payload: str -> Texto informativo del error para el usuario o log
+    # Definicion de la señal Qt que notifica incidencias o errores de comunicacion
     error_ocurrido: Signal = Signal(str)
 
+    # Constructor del hilo trabajador que recibe la instancia del adaptador de hardware
     def __init__(self, adaptador: IAdaptadorOBD) -> None:
         """
         Inicializa el trabajador asíncrono con una instancia del adaptador OBD.
@@ -40,10 +43,14 @@ class TrabajadorOBD(QThread):
             adaptador (IAdaptadorOBD): Instancia del adaptador que implementa
                                        la interfaz de comunicación con el hardware.
         """
+        # Invocacion del constructor base de QThread
         super().__init__()
+        # Asignacion del adaptador de hardware recibido
         self.adaptador: IAdaptadorOBD = adaptador
-        self._ejecutando: bool = True  # Bandera de control para el bucle de sondeo continuo
+        # Inicializacion de la bandera de ejecucion del bucle continuo
+        self._ejecutando: bool = True
 
+    # Metodo principal de entrada del hilo asincrono ejecutado en segundo plano
     def run(self) -> None:
         """
         Punto de entrada del hilo secundario (se ejecuta al invocar .start()).
@@ -51,33 +58,40 @@ class TrabajadorOBD(QThread):
         Establece la conexión inicial con el hardware y mantiene un bucle de
         sondeo continuo a una frecuencia de 10 Hz (espera de 100 ms por iteración).
         """
+        # Bloque try general para la captura de excepciones durante el ciclo de vida del hilo
         try:
-            # 1. Intentar conexión inicial con el adaptador (físico o simulador)
+            # Intento de establecimiento de conexion con el dispositivo OBD
             if not self.adaptador.conectar():
+                # Emision de señal de error si falla la conexion inicial
                 self.error_ocurrido.emit(
                     "No se pudo establecer conexión con el adaptador OBD."
                 )
+                # Finalizacion temprana de la ejecucion del metodo run
                 return
 
-            # 2. Bucle de sondeo continuo mientras la bandera de control siga activa
+            # Bucle de sondeo continuo en segundo plano mientras la bandera continue activa
             while self._ejecutando:
+                # Bloque try interno para tolerar fallas de lectura sin romper el bucle principal
                 try:
-                    # Lectura síncrona de códigos DTC desde el bus/puerto
+                    # Lectura sincrona de codigos DTC desde el adaptador
                     dtcs: list[str] = self.adaptador.leer_dtc()
 
-                    # Transmitir los datos hacia la GUI mediante la señal Qt
+                    # Transmision asincrona de los codigos DTC a la GUI mediante la señal Qt
                     self.datos_recibidos.emit(dtcs)
+                # Captura de excepciones producidas durante una iteracion de lectura
                 except Exception as e:
-                    # Notificar error en iteración de lectura sin tumbar abruptamente el hilo
+                    # Notificacion del error especifico a la GUI mediante la señal Qt
                     self.error_ocurrido.emit(f"Error durante la lectura OBD: {str(e)}")
 
-                # 3. Muestreo a 10 Hz: Pausa asíncrona de 100 ms en el hilo secundario
+                # Pausa asincrona de 100 milisegundos en el hilo secundario para lograr sondeo a 10 Hz
                 self.msleep(100)
 
+        # Captura de fallos criticos a nivel de infraestructura del hilo
         except Exception as e:
-            # Captura de fallos críticos no controlados en la infraestructura del hilo
+            # Emision del mensaje de falla critica final
             self.error_ocurrido.emit(f"Fallo crítico en el hilo de control: {str(e)}")
 
+    # Metodo para detener de forma segura el hilo asincrono
     def detener(self) -> None:
         """
         Finaliza de manera limpia y segura la ejecución del hilo secundario.
@@ -85,6 +99,9 @@ class TrabajadorOBD(QThread):
         Desactiva la bandera de control del bucle `while`, solicita la detención
         del event-loop de Qt y espera la liberación de recursos del hilo.
         """
+        # Desactivacion de la bandera de control del bucle while
         self._ejecutando = False
-        self.quit()  # Detiene el bucle de eventos del hilo
-        self.wait()  # Bloquea hasta que la ejecución en segundo plano termine completamente
+        # Solicitud de detencion del bucle de eventos interno de QThread
+        self.quit()
+        # Bloqueo síncrono hasta que el hilo en segundo plano haya terminado completamente
+        self.wait()

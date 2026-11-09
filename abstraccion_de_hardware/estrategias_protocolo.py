@@ -1,3 +1,8 @@
+"""
+Decodificadores de respuestas OBD-II conforme a SAE J1979.
+Autor: Mendivil Jimenez Jose Luis
+Capa: Abstraccion de Hardware (HAL) / Capa 4
+"""
 # Decodificadores de respuestas OBD-II conforme a SAE J1979. (SAE J1979: estándar que define servicios de diagnóstico OBD.)
 # Su función es recibir información hexadecimal que envía el escáner ELM327 y convertirla en información que Python pueda entender.
 # por ejemplo 
@@ -12,7 +17,7 @@
 
 
 """ en palabras simples:
-💫 convierte información recibida en datos comprensibles 💫.
+con Svierte información recibida en datos comprensibles .
 """
 
 import re # Significa Regular Expressions o expresiones regulares. Para buscar y reconocer patrones dentro de un texto.
