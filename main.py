@@ -37,8 +37,8 @@ def main() -> None:
     parser.add_argument(
         "--modo",
         choices=["simulador", "real"],
-        default="simulador",
-        help="Modo de operación del hardware: 'simulador' (por defecto) o 'real'",
+        default="real",  # era simulador 
+        help="Modo de operación del hardware: 'simulador' o 'real'",
     )
     # Argumento para definir el puerto serie del dispositivo físico
     parser.add_argument(
@@ -66,8 +66,20 @@ def main() -> None:
     # Instanciar el hilo secundario (QThread), inyectándole el adaptador de hardware seleccionado
     trabajador_obd = TrabajadorOBD(adaptador=adaptador_hardware)
 
+
+    # Crear un adaptador independiente para el botón de simulación ***************
+    adaptador_simulador = AdaptadorSimulador()
+    # Desactivar los fallos programados para permitir conectar desde el primer intento
+    adaptador_simulador.modo_secuencia_fallos = False
+    # Crear el trabajador encargado exclusivamente del simulador
+    trabajador_simulador = TrabajadorOBD(adaptador=adaptador_simulador)
+    # ***************
+
     # Inyectar la referencia del trabajador OBD en la ventana principal para ejecutar acciones de control
     ventana_principal.set_trabajador_obd(trabajador_obd)
+
+    # Registrar el trabajador del simulador en la interfaz ************
+    ventana_principal.set_trabajador_simulador(trabajador_simulador) # ************
 
     # Conectar la señal de transmisión de DTCs del hilo con el slot de recepción de la GUI
     trabajador_obd.datos_recibidos.connect(ventana_principal.recibir_dtcs_asincronos)
@@ -85,13 +97,19 @@ def main() -> None:
     )
 
     # Arrancar la ejecución en segundo plano del hilo asíncrono de sondeo
-    trabajador_obd.start()
+    trabajador_obd.start() 
+
+    # Iniciar el hilo del simulador en segundo plano **********
+    trabajador_simulador.start() # deja preparado el trabajador para recibir la orden del botón. ***
 
     # Renderizar y mostrar en pantalla la ventana principal
     ventana_principal.show()
 
     # Garantizar la detención limpia del hilo secundario al cerrar la ventana principal
     app.aboutToQuit.connect(trabajador_obd.detener)
+
+    # Detener también el trabajador del simulador al cerrar la aplicación **********
+    app.aboutToQuit.connect(trabajador_simulador.detener) # *********
 
     # Iniciar el bucle de eventos principal de Qt
     sys.exit(app.exec())

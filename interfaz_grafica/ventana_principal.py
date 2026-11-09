@@ -64,6 +64,9 @@ class VentanaPrincipal(QMainWindow):
         self.reportes_actuales: List[DTCDTO] = []
         # Referencia al trabajador de comunicación asíncrona
         self.trabajador_obd: Optional[TrabajadorOBD] = None
+        # Estado independiente del simulador ********
+        self.simulador_activo: bool = False
+        self.trabajador_simulador: Optional[TrabajadorOBD] = None
 
         # Configuración de propiedades de la ventana
         self.setWindowTitle("Sistema de Monitoreo Vehicular - Blar Plus")
@@ -79,6 +82,26 @@ class VentanaPrincipal(QMainWindow):
         self.trabajador_obd.info_vehiculo_recibida.connect(self.actualizar_info_vehiculo)
         # Conexión de señal para captura de errores y desconexiones físicas
         self.trabajador_obd.error_ocurrido.connect(self.recibir_error_asincrono)
+
+    # ************ simulador de un carro  **************
+    def set_trabajador_simulador(self, trabajador: TrabajadorOBD) -> None:
+        """Inyecta el trabajador encargado de la simulación OBD-II."""
+        self.trabajador_simulador = trabajador
+        # Conectar información del vehículo
+        self.trabajador_simulador.info_vehiculo_recibida.connect(
+            self.actualizar_info_vehiculo
+        )
+        # Conectar recepción de códigos DTC
+        self.trabajador_simulador.datos_recibidos.connect(
+            self.recibir_dtcs_asincronos
+        )
+        # Conectar recepción de sensores
+        self.trabajador_simulador.sensores_recibidos.connect(
+            self.recibir_sensores_asincronos
+        ) 
+        self.trabajador_simulador.error_ocurrido.connect(
+            self.recibir_error_asincrono
+        ) # *********
 
     # Método para construir la estructura visual de la GUI
     def iniciar_interfaz(self) -> None:
@@ -100,9 +123,26 @@ class VentanaPrincipal(QMainWindow):
         )
         btn_conectar.clicked.connect(self.alternar_conexion)
 
+        self.btn_simulador = QPushButton("Conectar Simulador") # Botón para conectar el simulador OBD-II ****
+        # Estilo del botón de simulador *****
+        self.btn_simulador.setStyleSheet(
+                "color: white; font-weight: bold; background-color: #1976D2; border: 1px solid #0D47A1; padding: 6px; border-radius: 4px;"
+            )
+        # Conectar el botón con el método de activación del simulador ********
+        self.btn_simulador.clicked.connect(self.alternar_simulador) # desconectar si se quiere notener el simulador ***
+
+        # Crear layout vertical para apilar los botones a la derecha  ********
+        layout_botones_derecha = QVBoxLayout()
+        layout_botones_derecha.addWidget(btn_conectar)
+        layout_botones_derecha.addWidget(self.btn_simulador)
+        # ****************
+
+        # Armar el layout superior
         layout_superior.addWidget(self.lbl_estado_texto)
         layout_superior.addStretch()
-        layout_superior.addWidget(btn_conectar)
+        # Agregamos SOLAMENTE la columna de botones (ya incluye ambos botones dentro)
+        layout_superior.addLayout(layout_botones_derecha)
+
         layout_principal.addLayout(layout_superior)
 
         # Banner dinámico de identificación del vehículo conectado
@@ -326,10 +366,119 @@ class VentanaPrincipal(QMainWindow):
 
         self.layout_fallas_conductor.addStretch()
 
+    # **********************
+    def alternar_simulador(self) -> None:
+        """Activa o desactiva el simulador OBD-II."""
+
+        # Verificar que el trabajador esté disponible
+        if self.trabajador_simulador is None:
+            QMessageBox.warning(
+                self,
+                "Simulador",
+                "El trabajador del simulador no está disponible."
+            )
+            return
+
+        # Si está desconectado, iniciar simulación
+        if not self.simulador_activo:
+
+            # Evitar que el simulador se conecte si el escáner real está activo
+            if self.estadoConexion and not self.simulador_activo:
+                QMessageBox.warning(
+                    self,
+                    "Equipo ocupado",
+                    "Primero desconecta el escáner actual para utilizar el simulador."
+                )
+                return
+
+            exito = self.trabajador_simulador.iniciar_sondeo()
+
+            if not exito:
+                return
+
+            self.simulador_activo = True
+            self.estadoConexion = True
+
+            self.btn_simulador.setText("Desconectar Simulador")
+
+            self.lbl_estado_texto.setText(
+                "Estado de Conexión: SIMULADOR ACTIVO"
+            )
+
+            self.lbl_estado_texto.setStyleSheet(
+                "color: #2196F3; font-weight: bold;"
+            )
+
+            self.barra_estado_widget.actualizar_estado(
+                True,
+                "Simulador OBD-II conectado correctamente."
+            )
+
+            self.lbl_resumen.setText(
+                "Resumen rápido: Monitoreo vehicular en modo simulación."
+            )
+
+        else:
+            # Desconectar el simulador
+            self.trabajador_simulador.pausar_sondeo()
+
+            self.simulador_activo = False
+            self.estadoConexion = False
+
+            self.btn_simulador.setText("Conectar Simulador")
+
+            self.lbl_estado_texto.setText(
+                "Estado de Conexión: Desconectado"
+            )
+
+            self.lbl_estado_texto.setStyleSheet(
+                "color: #d9534f; font-weight: bold;"
+            )
+
+            self.barra_estado_widget.actualizar_estado(
+                False,
+                "Simulador desconectado."
+            )
+
+            # Actualizar resumen
+            self.lbl_resumen.setText(
+                "Resumen rápido: Simulador desconectado."
+            )
+
+            # Limpiar identificación del vehículo
+            self.lbl_banner_vehiculo.setText(
+                "Vehículo Monitoreado: NINGUNO (Equipo Desconectado)"
+            )
+
+            # Restablecer indicadores
+            self.btn_vel.setText("Velocidad\n0.0 km/h")
+            self.btn_temp.setText("Temperatura Motor\n0.0 °C")
+
+            # Limpiar códigos DTC
+            self.reportes_actuales = []
+            self.lista_dtc_widget.cargar_reportes([])
+            self.actualizar_vista_conductor_dtcs([])
+
+            # Limpiar gráfica
+            if hasattr(self, "grafico_widget"):
+                self.grafico_widget.limpiar_grafico()
+
+
+
     # Método slot para alternar estado de conexión
     def alternar_conexion(self) -> None:
         """Alterna el estado de conexión e invoca la actualización de sondeos e interfaz."""
         if not self.estadoConexion:
+            # Evitar conectar el escáner real mientras funciona el simulador
+            if self.simulador_activo:
+                QMessageBox.warning(
+                    self,
+                    "Simulador activo",
+                    "Primero desconecta el simulador para utilizar el escáner real."
+                )
+                return
+
+            
             if self.trabajador_obd:
                 exito_conexion = self.trabajador_obd.iniciar_sondeo()
                 if not exito_conexion:
@@ -419,27 +568,55 @@ class VentanaPrincipal(QMainWindow):
 
         dialogo = DialogoConfirmacion(self)
         resultado = dialogo.exec()
-
         if resultado == QDialog.DialogCode.Accepted:
-            if self.trabajador_obd:
-                self.trabajador_obd.solicitar_limpieza_dtc(
-                    codigos_seleccionados if codigos_seleccionados else None
+
+            # Identificar qué adaptador está conectado actualmente
+            if self.simulador_activo:
+                trabajador_activo = self.trabajador_simulador
+            else:
+                trabajador_activo = self.trabajador_obd
+
+            # Verificar que exista un trabajador activo
+            if trabajador_activo is None:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    "No se encontró un trabajador de conexión activo."
                 )
+                return
+
+            # Solicitar el borrado al adaptador correspondiente
+            exito = trabajador_activo.solicitar_limpieza_dtc(
+                codigos_seleccionados if codigos_seleccionados else None
+            )
+
+            # Actualizar la interfaz solamente si el borrado fue exitoso
+            if not exito:
+                return
 
             if codigos_seleccionados:
                 self.reportes_actuales = [
-                    dto for dto in self.reportes_actuales if dto.codigo not in codigos_seleccionados
+                    dto for dto in self.reportes_actuales
+                    if dto.codigo not in codigos_seleccionados
                 ]
-                mensaje = f"Se borraron {len(codigos_seleccionados)} código(s) seleccionado(s)."
+                mensaje = (
+                    f"Se borraron {len(codigos_seleccionados)} "
+                    "código(s) seleccionado(s)."
+                )
             else:
                 self.reportes_actuales = []
-                mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
+                mensaje = "Todos los códigos DTC fueron borrados correctamente."
 
             self.barra_estado_widget.actualizar_estado(True, mensaje)
             self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
             self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
+
         else:
-            self.barra_estado_widget.actualizar_estado(True, "Operación de borrado cancelada por el usuario.")
+            self.barra_estado_widget.actualizar_estado(
+                True,
+                "Operación de borrado cancelada por el usuario."
+            )
+
 
 
 # Punto de entrada directo de la GUI
