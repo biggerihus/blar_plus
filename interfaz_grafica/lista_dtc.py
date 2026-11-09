@@ -1,14 +1,13 @@
 """
 Módulo de Presentación de Diagnósticos DTC para Blar Plus.
 
-Define las estructuras de datos y el widget de tabla encargados de
-desplegar de forma interactiva y legible los códigos de falla (DTC)
-obtenidos desde la Capa de Control.
+Construye una tabla dinámica interactiva encargada de presentar los códigos de falla (DTC),
+clasificándolos visualmente con patrones de color condicional en función de su severidad.
 
 Autor: Estrada Loaiza Rogelio
 """
 
-from typing import List, Optional
+from typing import List, Optional, Union
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -18,18 +17,19 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
 )
+from nucleo_y_controladores.controlador_reporte import DTCDTO
 
 
 class DTCReporte:
     """
-    Contenedor de información simplificado para representar un código de falla DTC.
+    Estructura de datos para compatibilidad directa con reportes DTC.
 
     Atributos:
-        codigo (str): Código estándar OBD-II (ej. 'P0300').
-        categoria (str): Sistema del vehículo afectado (ej. 'Encendido', 'Admisión').
-        gravedad (str): Severidad del fallo ('Alta', 'Media', 'Baja').
-        descripcion (str): Detalle técnico del fallo detectado.
-        solucion (str): Procedimiento correctivo sugerido.
+        codigo (str): Identificador estándar del fallo (ej. 'P0300').
+        categoria (str): Área del vehículo afectada (ej. 'Encendido').
+        gravedad (str): Evaluación de impacto ('Alta', 'Media', 'Baja').
+        descripcion (str): Resumen técnico de la falla.
+        solucion (str): Acción de mantenimiento sugerida.
     """
 
     def __init__(
@@ -49,31 +49,31 @@ class DTCReporte:
 
 class ListaDTCWidget(QWidget):
     """
-    Widget de interfaz gráfica especializado en maquetar y ordenar fallas DTC.
+    Widget de tabla responsiva para la inspección detallada de códigos DTC.
 
-    Implementa una tabla adaptativa con renderizado condicional de colores
-    en función del nivel de severidad registrado.
+    Atributos:
+        tabla (QTableWidget): Componente que despliega la información organizada en 5 columnas.
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
-        Constructor del widget de la lista DTC.
+        Inicializa el widget y llama a la configuración de la tabla.
 
         Args:
-            parent (Optional[QWidget]): Widget contenedor padre en la jerarquía de Qt.
+            parent (Optional[QWidget]): Widget contenedor padre.
         """
         super().__init__(parent)
         self.inicializar_interfaz()
 
     def inicializar_interfaz(self) -> None:
-        """Configura la tabla principal, sus encabezados y comportamientos de estiramiento."""
+        """Configura la estructura de columnas y las reglas de estiramiento del contenedor."""
         layout_principal = QVBoxLayout(self)
         layout_principal.setContentsMargins(0, 0, 0, 0)
 
-        # 1. Instanciación de la tabla de datos
-        self.tabla_dtc = QTableWidget()
-        self.tabla_dtc.setColumnCount(5)
-        self.tabla_dtc.setHorizontalHeaderLabels([
+        # Construcción de la tabla con 5 columnas técnicas
+        self.tabla = QTableWidget()
+        self.tabla.setColumnCount(5)
+        self.tabla.setHorizontalHeaderLabels([
             "Código",
             "Categoría",
             "Gravedad",
@@ -81,30 +81,27 @@ class ListaDTCWidget(QWidget):
             "Solución",
         ])
 
-        # 2. Configuración de responsividad: Las columnas ocupan proporcionalmente todo el espacio disponible
-        self.tabla_dtc.horizontalHeader().setSectionResizeMode(
+        # Estiramiento uniforme de las columnas a lo largo del espacio visible
+        self.tabla.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
 
-        layout_principal.addWidget(self.tabla_dtc)
+        layout_principal.addWidget(self.tabla)
 
-    def cargar_reportes(self, reportes: List[DTCReporte]) -> None:
+    def cargar_reportes(self, reportes: List[Union[DTCReporte, DTCDTO]]) -> None:
         """
-        Limpia las filas existentes e inserta la nueva colección de reportes DTC.
+        Limpia la tabla y carga la lista de reportes aplicando formato de color según la gravedad.
 
-        Aplica formato de color a las celdas según el nivel de severidad:
-        - Alta: Fondo rojo claro (#f8d7da), texto oscuro (#721c24).
-        - Media: Fondo amarillo claro (#fff3cd), texto oscuro (#856404).
-        - Baja: Fondo verde claro (#d4edda), texto oscuro (#155724).
+        - Alta: Fondo rojo claro (#f8d7da), texto rojo oscuro (#721c24).
+        - Media: Fondo amarillo claro (#fff3cd), texto marrón (#856404).
+        - Baja: Fondo verde claro (#d4edda), texto verde oscuro (#155724).
 
         Args:
-            reportes (List[DTCReporte]): Lista de instancias de `DTCReporte` a desplegar.
+            reportes (List[Union[DTCReporte, DTCDTO]]): Colección de fallas a renderizar.
         """
-        # 1. Limpieza y preparación del tamaño de la tabla
-        self.tabla_dtc.setRowCount(0)
-        self.tabla_dtc.setRowCount(len(reportes))
+        self.tabla.setRowCount(0)  # Limpieza de registros previos
+        self.tabla.setRowCount(len(reportes))  # Dimensionamiento exacto de filas
 
-        # 2. Iteración y carga de celdas
         for row_idx, reporte in enumerate(reportes):
             item_codigo = QTableWidgetItem(reporte.codigo)
             item_categoria = QTableWidgetItem(reporte.categoria)
@@ -112,10 +109,9 @@ class ListaDTCWidget(QWidget):
             item_descripcion = QTableWidgetItem(reporte.descripcion)
             item_solucion = QTableWidgetItem(reporte.solucion)
 
-            # Alineación centrada para la columna de Gravedad
             item_gravedad.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # 3. Aplicación de colores según severidad
+            # Asignación cromática basada en el texto de gravedad
             gravedad_lower = reporte.gravedad.strip().lower()
             if gravedad_lower == "alta":
                 item_gravedad.setBackground(QColor("#f8d7da"))
@@ -127,9 +123,9 @@ class ListaDTCWidget(QWidget):
                 item_gravedad.setBackground(QColor("#d4edda"))
                 item_gravedad.setForeground(QColor("#155724"))
 
-            # 4. Asignación de los elementos a sus respectivas columnas en la fila activa
-            self.tabla_dtc.setItem(row_idx, 0, item_codigo)
-            self.tabla_dtc.setItem(row_idx, 1, item_categoria)
-            self.tabla_dtc.setItem(row_idx, 2, item_gravedad)
-            self.tabla_dtc.setItem(row_idx, 3, item_descripcion)
-            self.tabla_dtc.setItem(row_idx, 4, item_solucion)
+            # Inserción de las celdas en la fila activa
+            self.tabla.setItem(row_idx, 0, item_codigo)
+            self.tabla.setItem(row_idx, 1, item_categoria)
+            self.tabla.setItem(row_idx, 2, item_gravedad)
+            self.tabla.setItem(row_idx, 3, item_descripcion)
+            self.tabla.setItem(row_idx, 4, item_solucion)

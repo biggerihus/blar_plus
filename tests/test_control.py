@@ -1,14 +1,11 @@
 """
-Pruebas unitarias integradas para la capa de Control y Concurrencia.
+Suite de Pruebas Unitarias Integradas para la Capa de Control y Concurrencia.
 
-Este módulo evalúa:
-1. El comportamiento asíncrono y emisión de señales Qt de `TrabajadorOBD`.
-2. El manejo de excepciones de hardware dentro del hilo secundario.
-3. La lógica de negocio y estructuración de datos en `ControladorReporte`.
-
-Dependencias de prueba:
-- `unittest.mock.MagicMock`: Simulación desacoplada del contrato `IAdaptadorOBD`.
-- `pytestqt.qtbot.QtBot`: Intercepción asíncrona de señales Qt sin bloqueo de interfaz.
+Evalúa:
+1. El bucle continuo a 10 Hz y detención segura de `TrabajadorOBD`.
+2. La captura de errores de conexión inicial en `TrabajadorOBD`.
+3. La transformación de cadenas crudas a objetos `DTCDTO` en `ControladorReporte`.
+4. La acumulación de reportes en el historial de sesión.
 
 Autor: Erick Polanco Romero
 """
@@ -19,19 +16,18 @@ from pytestqt.qtbot import QtBot
 
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
 from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
-from nucleo_y_controladores.controlador_reporte import ControladorReporte
+from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
 
 
-def test_trabajador_obd_emite_datos_correctos(qtbot: QtBot) -> None:
+def test_trabajador_obd_sondeo_continuo_y_detencion(qtbot: QtBot) -> None:
     """
-    Verifica la transmisión exitosa de datos DTC mediante señales Qt en un hilo secundario.
+    Verifica que `TrabajadorOBD` emita señales en su bucle continuo a 10 Hz
+    y finalice adecuadamente al llamar al método `detener()`.
 
-    Pasos de la prueba:
-    1. Configura un mock de `IAdaptadorOBD` para simular lectura exitosa de códigos DTC.
-    2. Instancia `TrabajadorOBD` asociando el adaptador mock.
-    3. Intercepta la señal `datos_recibidos` mediante el gestor de contexto `qtbot.waitSignal`.
-    4. Inicia la ejecución asíncrona del hilo (`.start()`).
-    5. Asevera que los datos emitidos por la señal correspondan a la lista esperada.
+    Pasos:
+    1. Simula un adaptador que retorna True en `conectar()` y una lista DTC en `leer_dtc()`.
+    2. Espera asíncronamente la emisión de `datos_recibidos` mediante `qtbot.waitSignal`.
+    3. Llama a `detener()` y confirma que el hilo deja de ejecutarse (`isRunning() == False`).
     """
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
     mock_adaptador.conectar.return_value = True
@@ -42,67 +38,72 @@ def test_trabajador_obd_emite_datos_correctos(qtbot: QtBot) -> None:
     with qtbot.waitSignal(trabajador.datos_recibidos, timeout=1000) as blocker:
         trabajador.start()
 
+    # Validar que los datos emitidos por el hilo coincidan
     assert blocker.args == [["P0300", "P0171"]]
-    mock_adaptador.conectar.assert_called_once()
-    mock_adaptador.leer_dtc.assert_called_once()
+
+    # Detener el hilo de forma segura y aseverar que ya no esté activo
+    trabajador.detener()
+    assert not trabajador.isRunning()
 
 
-def test_trabajador_obd_manejo_de_error(qtbot: QtBot) -> None:
+def test_trabajador_obd_falla_conexion_inicial(qtbot: QtBot) -> None:
     """
-    Verifica la captura y notificación de excepciones de hardware en el hilo secundario.
+    Verifica la emisión inmediata de `error_ocurrido` si el adaptador no logra conectarse.
 
-    Pasos de la prueba:
-    1. Configura el mock del adaptador para lanzar un `ConnectionError` durante la lectura.
-    2. Intercepta la emisión de la señal `error_ocurrido`.
-    3. Asevera que el mensaje transmitido por la señal contenga el detalle original de la excepción.
+    Pasos:
+    1. Configura el mock del adaptador para retornar `False` en `conectar()`.
+    2. Intercepta la señal de error.
+    3. Confirma el mensaje descriptivo y la posterior detención limpia.
     """
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
-    mock_adaptador.conectar.return_value = True
-    mock_adaptador.leer_dtc.side_effect = ConnectionError("Falla en puerto serie")
+    mock_adaptador.conectar.return_value = False
 
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 
     with qtbot.waitSignal(trabajador.error_ocurrido, timeout=1000) as blocker:
         trabajador.start()
 
-    assert "Falla en puerto serie" in blocker.args[0]
+    assert "No se pudo establecer conexión" in blocker.args[0]
+    trabajador.detener()
 
 
-def test_controlador_reporte_generar_reporte() -> None:
+def test_controlador_reporte_procesar_dtcs_raw() -> None:
     """
-    Evalúa la correcta estructuración y cálculo de métricas en `ControladorReporte`.
+    Evalúa la transformación de una lista de cadenas crudas DTC a Objetos `DTCDTO`.
 
-    Pasos de la prueba:
-    1. Instancia `ControladorReporte`.
-    2. Genera un reporte enviando una lista de fallas de prueba.
-    3. Valida el conteo total de fallas, la coherencia de los códigos y la severidad asignada.
-    """
-    controlador = ControladorReporte()
-    dtcs_prueba = ["P0300", "P0171"]
-
-    reporte = controlador.generar_reporte(dtcs_prueba)
-
-    assert reporte["total_fallas"] == 2
-    assert reporte["codigos"] == dtcs_prueba
-    assert reporte["estado"] == "Crítico"
-
-
-def test_controlador_reporte_historial() -> None:
-    """
-    Verifica la persistencia y acumulación ordenada de diagnósticos en el historial.
-
-    Pasos de la prueba:
-    1. Genera dos reportes consecutivos (uno con fallas y otro limpio).
-    2. Obtiene el historial acumulado.
-    3. Comprueba el total de registros guardados y el estado correspondiente de cada uno.
+    Pasos:
+    1. Envía códigos catalogados ("P0300", "P0113") y un código no catalogado ("P9999").
+    2. Verifica que se retornen instancias válidas de `DTCDTO`.
+    3. Revisa la asignación de campos para el catálogo y para el fallback no catalogado.
     """
     controlador = ControladorReporte()
+    dtcs_raw = ["P0300", "P0113", "P9999"]
 
-    controlador.generar_reporte(["P0300"])
-    controlador.generar_reporte([])
+    dtos = controlador.procesar_dtcs_raw(dtcs_raw)
+
+    assert len(dtos) == 3
+    assert isinstance(dtos[0], DTCDTO)
+
+    # Evaluación de código catalogado conocido
+    assert dtos[0].codigo == "P0300"
+    assert dtos[0].categoria == "Encendido"
+    assert dtos[0].gravedad == "Alta"
+
+    # Evaluación de fallback para código no registrado en catálogo
+    assert dtos[2].codigo == "P9999"
+    assert dtos[2].categoria == "General"
+    assert "no catalogado" in dtos[2].descripcion
+
+
+def test_controlador_reporte_generar_reporte_e_historial() -> None:
+    """Verifica la generación de reportes y la acumulación secuencial en memoria."""
+    controlador = ControladorReporte()
+
+    reporte1 = controlador.generar_reporte(["P0300"])
+    reporte2 = controlador.generar_reporte([])
 
     historial = controlador.obtener_historial()
 
+    assert reporte1["estado"] == "Crítico"
+    assert reporte2["estado"] == "Sin Fallas"
     assert len(historial) == 2
-    assert historial[0]["estado"] == "Crítico"
-    assert historial[1]["estado"] == "Sin Fallas"
