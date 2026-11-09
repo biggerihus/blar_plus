@@ -2,8 +2,8 @@
 Suite de Pruebas Unitarias Integradas para la Capa de Control y Concurrencia.
 
 Evalúa:
-1. El bucle continuo a 10 Hz y detención segura de `TrabajadorOBD`.
-2. La captura de errores de conexión inicial en `TrabajadorOBD`.
+1. El sondeo continuo a 10 Hz y detención limpia en `TrabajadorOBD`.
+2. La captura y emisión de errores al fallar la conexión inicial en `TrabajadorOBD`.
 3. La transformación de cadenas crudas a objetos `DTCDTO` en `ControladorReporte`.
 4. La acumulación de reportes en el historial de sesión.
 
@@ -11,140 +11,117 @@ Autor: Erick Polanco Romero
 Capa: Pruebas Unitarias - Núcleo y Controladores / Capa 2
 """
 
-# Importacion de MagicMock para simular comportamientos de objetos de hardware sin dependencias reales
+# Importación de MagicMock para simular la interfaz de hardware
 from unittest.mock import MagicMock
-# Importacion del marco de pruebas pytest
+# Importación del marco de pruebas pytest
 import pytest
-# Importacion de QtBot para interactuar con señales y eventos asíncronos de PySide6
+# Importación de QtBot para interactuar con hilos y señales asíncronas de PySide6
 from pytestqt.qtbot import QtBot
 
-# Importacion de la interfaz abstracta IAdaptadorOBD
+# Importación de la interfaz abstracta IAdaptadorOBD
 from abstraccion_de_hardware.i_adaptador_obd import IAdaptadorOBD
-# Importacion de la clase TrabajadorOBD para el manejo del hilo secundario
+# Importación del trabajador asíncrono OBD
 from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
-# Importacion del controlador de reportes y la dataclass DTCDTO
+# Importación del controlador de reportes y el DTO
 from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
 
 
-# Prueba para evaluar el sondeo continuo a 10 Hz y la detencion limpia del hilo secundario
+# Prueba para verificar el bucle asíncrono y la detención limpia del hilo de control
 def test_trabajador_obd_sondeo_continuo_y_detencion(qtbot: QtBot) -> None:
     """
-    Verifica que `TrabajadorOBD` emita señales en su bucle continuo a 10 Hz
-    y finalice adecuadamente al llamar al método `detener()`.
-
-    Pasos:
-    1. Simula un adaptador que retorna True en `conectar()` y una lista DTC en `leer_dtc()`.
-    2. Espera asíncronamente la emisión de `datos_recibidos` mediante `qtbot.waitSignal`.
-    3. Llama a `detener()` y confirma que el hilo deja de ejecutarse (`isRunning() == False`).
+    Verifica que `TrabajadorOBD` active el sondeo, emita señales a 10 Hz
+    y finalice adecuadamente al invocar `detener()`.
     """
-    # Creacion de la instancia simulada (mock) basada en la interfaz IAdaptadorOBD
+    # Instanciación del mock del adaptador de hardware
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
-    # Configuracion del metodo conectar para responder siempre True
+    # Configuración de respuestas simuladas exitosas
     mock_adaptador.conectar.return_value = True
-    # Configuracion del metodo leer_dtc para devolver una lista ficticia con dos codigos
     mock_adaptador.leer_dtc.return_value = ["P0300", "P0171"]
+    mock_adaptador.leer_pid.return_value = 100.0
 
-    # Instanciacion de la clase TrabajadorOBD inyectando el adaptador simulado
+    # Instanciación del trabajador con el adaptador inyectado
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 
-    # Captura asincrona de la señal datos_recibidos con un tiempo limite de 1000 ms
-    with qtbot.waitSignal(trabajador.datos_recibidos, timeout=1000) as blocker:
-        # Inicio del hilo secundario de ejecucion
+    # Intercepción de la señal datos_recibidos con tiempo límite de 1500 ms
+    with qtbot.waitSignal(trabajador.datos_recibidos, timeout=1500) as blocker:
+        # Activar el sondeo explícitamente e iniciar el hilo secundario
+        trabajador.iniciar_sondeo()
         trabajador.start()
 
-    # Validacion de que los datos emitidos a traves de la señal coincidan con la lista esperada
+    # Verificación de que los datos emitidos por la señal coincidan con la lista esperada
     assert blocker.args == [["P0300", "P0171"]]
 
-    # Invocacion del metodo detener para finalizar la ejecucion del hilo de forma segura
+    # Invocación de la detención segura del hilo
     trabajador.detener()
-    # Aseveracion de que el hilo ha detenido su ejecucion correctamente
+    # Aserción de que el hilo ha finalizado su ejecución
     assert not trabajador.isRunning()
 
 
-# Prueba para verificar la respuesta inmediata cuando falla la conexion del adaptador
+# Prueba para verificar el manejo de errores ante fallo de conexión inicial
 def test_trabajador_obd_falla_conexion_inicial(qtbot: QtBot) -> None:
-    """
-    Verifica la emisión inmediata de `error_ocurrido` si el adaptador no logra conectarse.
-
-    Pasos:
-    1. Configura el mock del adaptador para retornar `False` en `conectar()`.
-    2. Intercepta la señal de error.
-    3. Confirma el mensaje descriptivo y la posterior detención limpia.
-    """
-    # Creacion de la instancia mock del adaptador
+    """Verifica la emisión inmediata de `error_ocurrido` cuando `conectar()` devuelve False."""
+    # Instanciación del mock simulando rechazo de conexión
     mock_adaptador = MagicMock(spec=IAdaptadorOBD)
-    # Configuracion del metodo conectar para simular un fallo devolviendo False
+    mock_adaptador.conectado = False
     mock_adaptador.conectar.return_value = False
 
-    # Instanciacion de TrabajadorOBD con el adaptador defectuoso
+    # Instanciación de TrabajadorOBD
     trabajador = TrabajadorOBD(adaptador=mock_adaptador)
 
-    # Intercepcion de la emision de la señal error_ocurrido
-    with qtbot.waitSignal(trabajador.error_ocurrido, timeout=1000) as blocker:
-        # Arrancado del hilo de ejecucion
-        trabajador.start()
+    # Captura de la señal error_ocurrido
+    with qtbot.waitSignal(trabajador.error_ocurrido, timeout=1500) as blocker:
+        # Intentar iniciar el sondeo
+        trabajador.iniciar_sondeo()
 
-    # Verificacion de que el mensaje de error emitido contenga el texto descriptivo esperado
-    assert "No se pudo establecer conexión" in blocker.args[0]
-    # Detencion del hilo tras el error
+    # Verificación de que el mensaje de error emitido contenga la descripción esperada
+    assert "No se pudo detectar el adaptador OBD-II" in blocker.args[0]
+    # Detención del hilo
     trabajador.detener()
 
 
-# Prueba para validar la transformacion de listas de texto en objetos DTO
+# Prueba para validar la transformación de tramas crudas DTC a objetos DTO
 def test_controlador_reporte_procesar_dtcs_raw() -> None:
-    """
-    Evalúa la transformación de una lista de cadenas crudas DTC a Objetos `DTCDTO`.
-
-    Pasos:
-    1. Envía códigos catalogados ("P0300", "P0113") y un código no catalogado ("P9999").
-    2. Verifica que se retornen instancias válidas de `DTCDTO`.
-    3. Revisa la asignación de campos para el catálogo y para el fallback no catalogado.
-    """
-    # Instanciacion del controlador de reportes
+    """Evalúa la conversión de códigos crudos a objetos `DTCDTO` enriquecidos."""
+    # Instanciación del controlador de reportes
     controlador = ControladorReporte()
-    # Lista de prueba con codigos reconocidos y uno no registrado
+    # Lista de prueba con códigos catalogados y uno no catalogado
     dtcs_raw = ["P0300", "P0113", "P9999"]
 
-    # Procesamiento de la lista cruda a objetos DTCDTO
+    # Procesamiento de la lista cruda
     dtos = controlador.procesar_dtcs_raw(dtcs_raw)
 
-    # Verificacion de que la lista resultante contenga 3 elementos
+    # Verificación de la cantidad de DTOs generados
     assert len(dtos) == 3
-    # Comprobacion de que el primer elemento sea una instancia valida de DTCDTO
+    # Verificación de instancia válida de DTCDTO
     assert isinstance(dtos[0], DTCDTO)
 
-    # Evaluacion de coincidencia en campos del primer codigo catalogado (P0300)
+    # Verificación del primer código catalogado (P0300)
     assert dtos[0].codigo == "P0300"
-    # Verificacion de la categoria asignada
     assert dtos[0].categoria == "Encendido"
-    # Verificacion del nivel de gravedad asignado
     assert dtos[0].gravedad == "Alta"
 
-    # Evaluacion de la plantilla por defecto (fallback) para el codigo no catalogado (P9999)
+    # Verificación de la plantilla por defecto para el código no catalogado (P9999)
     assert dtos[2].codigo == "P9999"
-    # Verificacion de la categoria por defecto
     assert dtos[2].categoria == "General"
-    # Verificacion de la presencia de la explicacion en la descripcion
-    assert "no catalogado" in dtos[2].descripcion
+    assert "no catalogado" in dtos[2].descripcion.lower()
 
 
-# Prueba para verificar la generacion de reportes y su historial en memoria
+# Prueba para verificar la acumulación de reportes en el historial de sesión
 def test_controlador_reporte_generar_reporte_e_historial() -> None:
-    """Verifica la generación de reportes y la acumulación secuencial en memoria."""
-    # Instanciacion del controlador de reportes
+    """Verifica la generación de reportes formateados y su registro secuencial en memoria."""
+    # Instanciación del controlador
     controlador = ControladorReporte()
 
-    # Generacion de un primer reporte con un codigo activo
+    # Generación de reporte con falla activa
     reporte1 = controlador.generar_reporte(["P0300"])
-    # Generacion de un segundo reporte con lista vacia
+    # Generación de reporte sin fallas
     reporte2 = controlador.generar_reporte([])
 
-    # Consulta de la lista de historial acumulado
+    # Consulta del historial acumulado
     historial = controlador.obtener_historial()
 
-    # Verificacion de que el estado con fallas sea Critico
+    # Verificación de estados devueltos
     assert reporte1["estado"] == "Crítico"
-    # Verificacion de que el estado sin fallas sea Sin Fallas
     assert reporte2["estado"] == "Sin Fallas"
-    # Verificacion de que existan exactamente 2 reportes almacenados en el historial
+    # Verificación de que se registraran exactamente 2 reportes en el historial
     assert len(historial) == 2

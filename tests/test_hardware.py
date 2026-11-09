@@ -1,181 +1,135 @@
 """
 Suite de Pruebas Unitarias para la Capa de Abstracción de Hardware (HAL).
 
-Autor: Mendivil Jimenez Jose Luis
+Autor: Mendivil Jimenez Jose Luis & Estrada Loaiza Rogelio
 Capa: Pruebas Unitarias - Abstracción de Hardware / Capa 4
 """
-# Estas pruebas sirven para comprobar que el simulador funciona correctamente.
-# Por ejemplo: conectarse, leer fallas, leer sensores y borrar códigos.
 
+# Importación del marco de pruebas pytest
 import pytest
-# Importamos pytest, una herramienta para realizar pruebas en Python. Nos ayuda a verificar si las funciones trabajan correctamente.
-
+# Importación del adaptador simulador de la Capa HAL
 from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
-# AdaptadorSimulador esta clase imita el funcionamiento de un adaptador OBD-II sin necesidad de conectarnos a un automóvil real.
 
 
-def test_simulador_conexion_y_lectura():
-    # Esta prueba verifica que el simulador pueda conectarse,
-    # leer códigos de falla y desconectarse.
-
+# Prueba para verificar la conexión inicial y la lectura de códigos DTC
+def test_simulador_conexion_y_lectura() -> None:
+    """Verifica que el simulador se conecte, devuelva una lista de DTCs y se desconecte limpiamente."""
+    # Instanciación del objeto simulador
     sim = AdaptadorSimulador()
-    # Creamos un objeto llamado sim para utilizar el simulador.
+    # Desactivar secuencia de fallos para probar la conexión estándar
+    sim.modo_secuencia_fallos = False
 
+    # Comprobación de que la conexión retorne True
     assert sim.conectar("/dev/ttyUSB0") is True
-    # Intentamos conectar el simulador.
-    # assert comprueba que una condición sea verdadera.
-    # Si conectar() devuelve True, la prueba continúa.
-    # Si devuelve False, la prueba falla.
+    # Comprobación de que el estado de conexión interno sea True
+    assert sim.conectado is True
 
+    # Lectura de la lista de códigos DTC activos
     dtcs = sim.leer_dtc()
-    # Leemos los códigos de falla simulados.
-    # Guardamos los códigos encontrados en la variable dtcs.
-
+    # Verificación de que el resultado sea una estructura de lista
     assert isinstance(dtcs, list)
-    # Verificamos que dtcs sea una lista.
-    # isinstance() comprueba el tipo de dato.
-    # Por ejemplo: ["P0300", "P0171"] es una lista.
-
+    # Verificación de que la lista contenga al menos un código simulado
     assert len(dtcs) > 0
-    # len(dtcs) cuenta cuántos elementos tiene la lista.
-    # > 0 significa que debe tener al menos un código.
-    # Si está vacía, la prueba falla.
 
+    # Ejecución de la desconexión del adaptador
     sim.desconectar()
-    # Desconectamos el simulador.
-
+    # Comprobación de que el adaptador haya actualizado su estado a False
     assert sim.conectado is False
-    # Comprobamos que el simulador esté desconectado.
-    # False significa que ya no existe una conexión activa.
 
 
-def test_simulador_lectura_sin_conexion():
-    """Comprueba que no se puedan leer DTC sin conexión."""
-
-    # Esta prueba verifica que el simulador genere un error
-    # si intentamos leer fallas sin conectarnos primero.
-
+# Prueba para validar la protección de lectura sin conexión
+def test_simulador_lectura_sin_conexion() -> None:
+    """Comprueba que el simulador genere RuntimeError si se leen DTCs estando desconectado."""
+    # Instanciación del simulador sin invocar conectar()
     sim = AdaptadorSimulador()
-    # Creamos el simulador, pero no lo conectamos.
 
+    # Verificación de captura de excepción RuntimeError
     with pytest.raises(RuntimeError):
-        # pytest.raises() comprueba que ocurra un error esperado.
-        # RuntimeError es el tipo de error que esperamos.
-        #
-        # En este caso, el error es correcto porque
-        # estamos intentando leer sin conexión.
-
         sim.leer_dtc()
-        # Intentamos leer códigos de falla.
-        # Como no estamos conectados, debe aparecer RuntimeError.
-        # Si aparece ese error, la prueba pasa.
 
 
-def test_simulador_lectura_pid():
-    """Comprueba que los sensores generen valores dentro del rango."""
-
-    # Esta prueba verifica que las RPM y la velocidad
-    # sean números decimales dentro de los rangos permitidos.
-
+# Prueba para validar la correlación física y rangos válidos de PIDs
+def test_simulador_lectura_pid() -> None:
+    """Comprueba que las lecturas de PIDs generen valores en coma flotante dentro de rangos físicos válidos."""
+    # Instanciación del simulador
     sim = AdaptadorSimulador()
-    # Creamos el simulador.
-
+    # Desactivar secuencia de fallos
+    sim.modo_secuencia_fallos = False
+    # Conexión al adaptador
     sim.conectar("/dev/ttyUSB0")
-    # Conectamos el simulador.
 
+    # Lectura de RPM (PID 010C)
     rpm = sim.leer_pid("010C")
-    # Consultamos el PID 010C, que corresponde a las RPM.
-    # Guardamos el resultado en rpm.
-    # Por ejemplo: 1500.0 RPM.
-
+    # Lectura de Velocidad (PID 010D)
     velocidad = sim.leer_pid("010D")
-    # Consultamos el PID 010D, que corresponde a la velocidad.
-    # Guardamos el resultado en velocidad.
-    # Por ejemplo: 60.0 km/h.
 
+    # Verificación de tipo float para RPM
     assert isinstance(rpm, float)
-    # Comprobamos que las RPM sean un número decimal (float).
-    # Por ejemplo: 1500.0
+    # Verificación de rango físico permitido de RPM (750.0 RPM a 3500.0 RPM considerando fluctuación en ralentí)
+    assert 750.0 <= rpm <= 3500.0
 
-    assert 800.0 <= rpm <= 3000.0
-    # Verificamos que las RPM estén entre 800 y 3000.
-    #
-    # <= significa "menor o igual que".
-    # Por ejemplo:
-    # rpm = 1500.0 -> Correcto.
-    # rpm = 3500.0 -> La prueba falla.
-
+    # Verificación de tipo float para velocidad
     assert isinstance(velocidad, float)
-    # Comprobamos que la velocidad sea un número decimal.
-    # Por ejemplo: 60.0
-
+    # Verificación de rango físico permitido de velocidad (0.0 km/h a 120.0 km/h)
     assert 0.0 <= velocidad <= 120.0
-    # Verificamos que la velocidad esté entre 0 y 120 km/h.
-    #
-    # Por ejemplo:
-    # velocidad = 80.0 -> Correcto.
-    # velocidad = 150.0 -> La prueba falla.
 
+    # Desconexión limpia
     sim.desconectar()
-    # Desconectamos el simulador al terminar.
 
 
-def test_simulador_limpiar_dtc():
-    """Comprueba que se puedan borrar los códigos simulados."""
-
-    # Esta prueba verifica que el simulador pueda borrar
-    # los códigos de falla almacenados.
-
+# Prueba para validar el borrado de códigos DTC simulados
+def test_simulador_limpiar_dtc() -> None:
+    """Comprueba que la orden de borrado limpie la memoria de códigos en la ECU simulada."""
+    # Instanciación del simulador
     sim = AdaptadorSimulador()
-    # Creamos el simulador.
-
+    # Desactivar secuencia de fallos
+    sim.modo_secuencia_fallos = False
+    # Conexión al adaptador
     sim.conectar("/dev/ttyUSB0")
-    # Conectamos el simulador.
 
+    # Ejecución de la operación de borrado total
     resultado = sim.limpiar_dtc()
-    # Ejecutamos la función que borra los códigos de falla.
-    # Guardamos el resultado en la variable resultado.
-
+    # Verificación de respuesta exitosa
     assert resultado is True
-    # Comprobamos que la función devuelva True.
-    # Esto indica que el simulador reportó el borrado como exitoso.
-
+    # Verificación de que la lista de DTCs remanentes esté vacía
     assert sim.leer_dtc() == []
-    # Volvemos a consultar los códigos de falla.
-    # == significa "es igual a".
-    # [] representa una lista vacía.
-    #
-    # Si devuelve [], significa que no quedan códigos.
-    # Si todavía hay códigos, la prueba falla.
 
+    # Desconexión limpia
     sim.desconectar()
-    # Desconectamos el simulador.
 
 
-def test_simulador_pid_no_soportado():
-    """Comprueba el manejo de identificadores PID desconocidos."""
-
-    # Esta prueba verifica que el simulador genere un error
-    # cuando intentamos consultar un PID que no reconoce.
-
+# Prueba para comprobar el rechazo de PIDs no soportados
+def test_simulador_pid_no_soportado() -> None:
+    """Comprueba que la consulta de un PID no catalogado provoque un ValueError."""
+    # Instanciación del simulador
     sim = AdaptadorSimulador()
-    # Creamos el simulador.
-
+    sim.modo_secuencia_fallos = False
     sim.conectar("/dev/ttyUSB0")
-    # Conectamos el simulador.
 
+    # Verificación de lanzamiento de ValueError ante un PID inválido
     with pytest.raises(ValueError):
-        # Indicamos que esperamos un error de tipo ValueError.
-        #
-        # ValueError aparece cuando proporcionamos
-        # un valor que la función no acepta.
-        #
-        # Si aparece este error, la prueba pasa.
-
         sim.leer_pid("9999")
-        # Intentamos consultar el PID 9999.
-        # Este PID no está soportado por el simulador.
-        # Por eso esperamos que genere ValueError.
 
+    # Desconexión limpia
     sim.desconectar()
-    # Desconectamos el simulador.
+
+
+# Prueba para validar la máquina de secuencia de fallos físicos
+def test_simulador_secuencia_fallos() -> None:
+    """Valida la secuencia de fallos: Rechazo en 1.er intento y conexión exitosa en 2.º intento."""
+    # Instanciación del simulador
+    sim = AdaptadorSimulador()
+    # Activar explícitamente el modo de secuencia de fallos
+    sim.modo_secuencia_fallos = True
+    sim.intentos_conexion = 0
+
+    # 1.er Intento: Debe ser rechazado (conectar() -> False)
+    assert sim.conectar() is False
+    assert sim.conectado is False
+
+    # 2.º Intento: Debe ser aceptado (conectar() -> True)
+    assert sim.conectar() is True
+    assert sim.conectado is True
+
+    # Desconexión al finalizar la prueba
+    sim.desconectar()

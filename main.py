@@ -6,7 +6,7 @@ Este módulo se encarga de instanciar e interconectar todas las capas de la arqu
 - Capa Núcleo y Concurrencia (Hilo secundario de sondeo en segundo plano).
 - Capa de Interfaz Gráfica (Ventana Principal PySide6).
 
-Soporta selección de modo (Simulador vs ELM327 Real) mediante argumentos de consola.
+Soporta selección de modo (Simulador vs ELM327 Real) mediante argumentos de consola o la interfaz gráfica.
 
 Autor: Equipo Blar Plus
 """
@@ -20,8 +20,8 @@ import sys
 from PySide6.QtWidgets import QApplication
 
 # Importación de los adaptadores de hardware (Simulador y ELM327 Real)
-from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
 from abstraccion_de_hardware.adaptador_elm327 import AdaptadorELM327
+from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
 
 # Importación de la clase del hilo secundario encargado del sondeo asíncrono a 10 Hz
 from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
@@ -52,7 +52,7 @@ def main() -> None:
     # Instanciar la aplicación Qt encargada de administrar el ciclo de vida y eventos
     app = QApplication(sys.argv)
 
-    # Selección e instanciación del adaptador de hardware según los argumentos
+    # Selección e instanciación del adaptador de hardware según los argumentos de consola
     if args.modo == "real":
         print(f"[!] Iniciando escáner en MODO REAL conectando a {args.puerto}...")
         adaptador_hardware = AdaptadorELM327()
@@ -62,6 +62,12 @@ def main() -> None:
 
     # Instanciar el contenedor de la interfaz gráfica principal
     ventana_principal = VentanaPrincipal()
+
+    # Si se especificó el modo real por consola, sincronizar el selector visual de la GUI
+    if args.modo == "real":
+        index = ventana_principal.combo_puerto_modo.findData(args.puerto)
+        if index != -1:
+            ventana_principal.combo_puerto_modo.setCurrentIndex(index)
 
     # Instanciar el hilo secundario (QThread), inyectándole el adaptador de hardware seleccionado
     trabajador_obd = TrabajadorOBD(adaptador=adaptador_hardware)
