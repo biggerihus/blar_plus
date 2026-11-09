@@ -26,7 +26,7 @@ class AdaptadorSimulador(IAdaptadorOBD):
         self._dtcs_simulados: list[str] = ['P0300', 'P0171', 'P0420']
 
 
-    def conectar(self, puerto: str, baudrate: int = 38400) -> bool:
+    def conectar(self, puerto: str = "SIMULADOR", baudrate: int = 38400) -> bool:
         """
         Simula la conexión a un dispositivo OBD-II.
 
