@@ -66,8 +66,16 @@ def main() -> None:
     # Instanciar el hilo secundario (QThread), inyectándole el adaptador de hardware seleccionado
     trabajador_obd = TrabajadorOBD(adaptador=adaptador_hardware)
 
+    # Inyectar la referencia del trabajador OBD en la ventana principal para ejecutar acciones de control
+    ventana_principal.set_trabajador_obd(trabajador_obd)
+
     # Conectar la señal de transmisión de DTCs del hilo con el slot de recepción de la GUI
     trabajador_obd.datos_recibidos.connect(ventana_principal.recibir_dtcs_asincronos)
+
+    # Conectar la señal de telemetría de sensores en tiempo real con el slot de la GUI
+    trabajador_obd.sensores_recibidos.connect(
+        ventana_principal.recibir_sensores_asincronos
+    )
 
     # Conectar la señal de errores del hilo con la barra de estado visual (LED) de la GUI
     trabajador_obd.error_ocurrido.connect(

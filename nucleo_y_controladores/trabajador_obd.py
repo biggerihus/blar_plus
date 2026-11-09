@@ -9,6 +9,8 @@ Autor: Erick Polanco Romero
 Capa: Núcleo y Controladores / Capa 2
 """
 
+# Importacion de Optional para tipado de parametros opcionales
+from typing import Optional
 # Importacion de QThread para ejecucion asincrona en segundo plano y Signal para comunicacion Qt
 from PySide6.QtCore import QThread, Signal
 # Importacion de la interfaz abstracta del adaptador hardware
@@ -25,11 +27,15 @@ class TrabajadorOBD(QThread):
 
     Señales Qt (Atributos de Clase):
         datos_recibidos (Signal): Emite una lista de cadenas con los códigos DTC leídos.
+        sensores_recibidos (Signal): Emite un diccionario con las lecturas continuas de sensores.
         error_ocurrido (Signal): Emite una cadena con el mensaje descriptivo del fallo.
     """
 
     # Definicion de la señal Qt que transmite la lista de codigos DTC hacia la interfaz
     datos_recibidos: Signal = Signal(list)
+
+    # Definicion de la señal Qt que transmite el diccionario con lecturas de sensores en tiempo real
+    sensores_recibidos: Signal = Signal(dict)
 
     # Definicion de la señal Qt que notifica incidencias o errores de comunicacion
     error_ocurrido: Signal = Signal(str)
@@ -75,9 +81,26 @@ class TrabajadorOBD(QThread):
                 try:
                     # Lectura sincrona de codigos DTC desde el adaptador
                     dtcs: list[str] = self.adaptador.leer_dtc()
-
                     # Transmision asincrona de los codigos DTC a la GUI mediante la señal Qt
                     self.datos_recibidos.emit(dtcs)
+
+                    # Lectura sincrona de parametros de los 10 sensores OBD-II soportados
+                    sensores: dict[str, float] = {
+                        "rpm": self.adaptador.leer_pid("010C"),
+                        "velocidad": self.adaptador.leer_pid("010D"),
+                        "temperatura": self.adaptador.leer_pid("0105"),
+                        "carga_motor": self.adaptador.leer_pid("0104"),
+                        "posicion_acelerador": self.adaptador.leer_pid("0111"),
+                        "maf": self.adaptador.leer_pid("0110"),
+                        "sensor_o2": self.adaptador.leer_pid("0114"),
+                        "iat": self.adaptador.leer_pid("010F"),
+                        "nivel_combustible": self.adaptador.leer_pid("012F"),
+                        "presion_map": self.adaptador.leer_pid("010B"),
+                    }
+
+                    # Emision de señal de telemetria multisensores en tiempo real a la GUI
+                    self.sensores_recibidos.emit(sensores)
+
                 # Captura de excepciones producidas durante una iteracion de lectura
                 except Exception as e:
                     # Notificacion del error especifico a la GUI mediante la señal Qt
@@ -90,6 +113,25 @@ class TrabajadorOBD(QThread):
         except Exception as e:
             # Emision del mensaje de falla critica final
             self.error_ocurrido.emit(f"Fallo crítico en el hilo de control: {str(e)}")
+
+    # Metodo para solicitar la limpieza de DTCs al adaptador de hardware en segundo plano
+    def solicitar_limpieza_dtc(self, codigos: Optional[list[str]] = None) -> bool:
+        """
+        Solicita al adaptador de hardware la eliminación de los códigos DTC.
+
+        Args:
+            codigos (Optional[list[str]]): Lista de códigos a borrar o None para borrado completo.
+
+        Returns:
+            bool: True si la eliminación fue confirmada por el hardware.
+        """
+        try:
+            # Ejecución de la limpieza directamente en el adaptador de hardware
+            return self.adaptador.limpiar_dtc(codigos)
+        except Exception as e:
+            # Notificación del error en caso de fallo durante el borrado
+            self.error_ocurrido.emit(f"Error al borrar códigos DTC: {str(e)}")
+            return False
 
     # Metodo para detener de forma segura el hilo asincrono
     def detener(self) -> None:

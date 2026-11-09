@@ -41,6 +41,8 @@ from interfaz_grafica.lista_dtc import ListaDTCWidget
 from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
 # Importación de la capa de control y su DTO
 from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
+# Importación del trabajador OBD para anotación de tipo estricta
+from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
 
 
 # Clase VentanaPrincipal que hereda de QMainWindow para coordinar todo el sistema visual
@@ -57,6 +59,7 @@ class VentanaPrincipal(QMainWindow):
         lista_dtc_widget (ListaDTCWidget): Tabla de diagnósticos DTC.
         layout_fallas_conductor (QVBoxLayout): Layout dinámico de tarjetas amigables para el conductor.
         reportes_actuales (List[DTCDTO]): Lista local de fallas activas procesadas.
+        trabajador_obd (Optional[TrabajadorOBD]): Referencia inyectada del hilo asíncrono.
     """
 
     # Constructor de la ventana principal que configura las vistas y controladores
@@ -75,6 +78,8 @@ class VentanaPrincipal(QMainWindow):
         self.controlador_reporte: ControladorReporte = ControladorReporte()
         # Colección en memoria de reportes procesados
         self.reportes_actuales: List[DTCDTO] = []
+        # Atributo para almacenar la referencia al hilo trabajador de comunicación
+        self.trabajador_obd: Optional[TrabajadorOBD] = None
 
         # Título de la ventana principal
         self.setWindowTitle("Sistema de Monitoreo Vehicular - Blar Plus")
@@ -82,6 +87,16 @@ class VentanaPrincipal(QMainWindow):
         self.resize(1100, 800)
         # Llamada al método de ensamblado de la interfaz gráfica
         self.iniciar_interfaz()
+
+    # Método para inyectar la referencia del hilo trabajador asíncrono
+    def set_trabajador_obd(self, trabajador: TrabajadorOBD) -> None:
+        """
+        Inyecta la instancia de TrabajadorOBD para permitir solicitudes de control.
+
+        Args:
+            trabajador (TrabajadorOBD): Hilo en segundo plano activo.
+        """
+        self.trabajador_obd = trabajador
 
     # Método principal que crea la estructura visual de la ventana
     def iniciar_interfaz(self) -> None:
@@ -171,13 +186,13 @@ class VentanaPrincipal(QMainWindow):
         # Layout horizontal para los botones de indicadores principales
         layout_indicadores = QHBoxLayout()
         # Botón indicador de velocidad
-        self.btn_vel = QPushButton("Velocidad\n0 km/h")
+        self.btn_vel = QPushButton("Velocidad\n0.0 km/h")
         self.btn_vel.setStyleSheet(
             "background-color: #1E1E1E; border: 2px solid #007ACC; border-radius: 12px; font-size: 18px; padding: 20px; font-weight: bold; color: #FFFFFF;"
         )
 
         # Botón indicador de temperatura del motor
-        self.btn_temp = QPushButton("Temperatura Motor\n90 °C")
+        self.btn_temp = QPushButton("Temperatura Motor\n0.0 °C")
         self.btn_temp.setStyleSheet(
             "background-color: #1E1E1E; border: 2px solid #28A745; border-radius: 12px; font-size: 18px; padding: 20px; font-weight: bold; color: #FFFFFF;"
         )
@@ -365,7 +380,7 @@ class VentanaPrincipal(QMainWindow):
         # Extraer los códigos actualmente cargados en memoria
         codigos_actuales = [dto.codigo for dto in self.reportes_actuales]
 
-        # Si los códigos recibidos son idénticos a los que ya tenemos desplegados, omitimos la recarga
+        # Si los códigos recibidos son idénticos a los desplegados, omitimos la recarga
         if codigos_actuales == dtcs_raw:
             return
 
@@ -378,6 +393,26 @@ class VentanaPrincipal(QMainWindow):
         # Carga de tarjetas traducidas para la vista de conductor
         self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
 
+    # Slot para recibir la telemetría continua de sensores y actualizar la interfaz en vivo
+    def recibir_sensores_asincronos(self, datos_sensores: dict) -> None:
+        """
+        Slot receptor para actualizar la telemetría dinámica de sensores en tiempo real.
+
+        Args:
+            datos_sensores (dict): Diccionario con claves de sensores y sus lecturas.
+        """
+        # Extracción de valores numéricos de telemetría para la vista del conductor
+        velocidad = datos_sensores.get("velocidad", 0.0)
+        temperatura = datos_sensores.get("temperatura", 0.0)
+
+        # Actualización de los marcadores visuales en el panel del conductor
+        self.btn_vel.setText(f"Velocidad\n{velocidad:.1f} km/h")
+        self.btn_temp.setText(f"Temperatura Motor\n{temperatura:.1f} °C")
+
+        # Refresco dinámico del gráfico técnico con el diccionario completo de sensores
+        if hasattr(self.grafico_widget, "actualizar_grafico"):
+            self.grafico_widget.actualizar_grafico(datos_sensores)
+
     # Método slot para cambiar la pantalla visible en el widget apilado
     def cambiar_vista(self, index: int) -> None:
         """Cambia el panel visible según el menú desplegable."""
@@ -388,7 +423,7 @@ class VentanaPrincipal(QMainWindow):
     def abrir_dialogo_borrado(self) -> None:
         """
         Abre la ventana modal de seguridad para autorizar el borrado de códigos.
-        Si hay casillas seleccionadas en la columna 'Sel.', borra sólo esas fallas; de lo contrario, borra todas.
+        Ejecuta la orden de borrado de forma persistente en la ECU/Simulador mediante TrabajadorOBD.
         """
         # Obtener los códigos DTC marcados en las casillas de verificación de la tabla
         codigos_seleccionados = self.lista_dtc_widget.obtener_codigos_seleccionados()
@@ -400,18 +435,20 @@ class VentanaPrincipal(QMainWindow):
 
         # Si el usuario presionó Confirmar
         if resultado == QDialog.DialogCode.Accepted:
-            # Evaluar si el usuario seleccionó códigos específicos para borrar
+            # Notificar al adaptador de hardware mediante TrabajadorOBD para persistir el borrado
+            if self.trabajador_obd:
+                self.trabajador_obd.solicitar_limpieza_dtc(
+                    codigos_seleccionados if codigos_seleccionados else None
+                )
+
+            # Evaluar el tipo de borrado aplicado en la vista local
             if codigos_seleccionados:
-                # Filtrar la lista conservando sólo las fallas NO seleccionadas
                 self.reportes_actuales = [
                     dto for dto in self.reportes_actuales if dto.codigo not in codigos_seleccionados
                 ]
-                # Mensaje de confirmación de borrado parcial
                 mensaje = f"Se borraron {len(codigos_seleccionados)} código(s) seleccionado(s)."
             else:
-                # Si no había casillas marcadas, vaciar la lista completa de fallas
                 self.reportes_actuales = []
-                # Mensaje de confirmación de borrado total
                 mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
 
             # Actualizar la barra de estado con el resultado de la operación

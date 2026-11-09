@@ -5,6 +5,8 @@ Autor: Mendivil Jimenez Jose Luis
 Capa: Abstraccion de Hardware (HAL) / Capa 4
 """
 
+# Importacion de Optional para tipado flexible en argumentos de borrado
+from typing import Optional
 # Importacion del modulo random para generar numeros aleatorios que simulan lecturas de sensores
 import random
 # Importacion del modulo time para simular retardos de red y tiempo de respuesta en la conexion
@@ -66,19 +68,32 @@ class AdaptadorSimulador(IAdaptadorOBD):
         return self._dtcs_simulados.copy()
 
     # Metodo para simular el borrado de codigos DTC de la memoria de la ECU
-    def limpiar_dtc(self) -> bool:
+    def limpiar_dtc(self, codigos: Optional[list[str]] = None) -> bool:
         """
         Simula la limpieza de códigos de diagnóstico (DTC) del vehículo.
-        Devuelve True si la operación fue exitosa.
+        Permite el borrado parcial (lista específica) o total (si codigos es None).
+
+        Args:
+            codigos (Optional[list[str]]): Lista opcional de códigos específicos a eliminar.
+
         Returns:
-            True si los códigos DTC fueron "limpiados" correctamente.
+            True si los códigos DTC fueron eliminados correctamente.
         """
         # Verificacion del estado de conexion antes de borrar
         if not self.conectado:
             # Lanzamiento de excepcion si no existe conexion activa
             raise RuntimeError("--Desde el simulador-- No conectado al dispositivo OBD-II.")
-        # Vaciado de la lista de codigos simulados para simular el borrado
-        self._dtcs_simulados = []
+
+        # Evaluar si se especificaron codigos concretos a eliminar
+        if codigos:
+            # Filtrado para conservar unicamente los codigos no seleccionados
+            self._dtcs_simulados = [
+                dtc for dtc in self._dtcs_simulados if dtc not in codigos
+            ]
+        else:
+            # Vaciado total de la lista de codigos simulados
+            self._dtcs_simulados = []
+
         # Retorno de confirmacion exitosa
         return True
 
@@ -96,15 +111,45 @@ class AdaptadorSimulador(IAdaptadorOBD):
             # Lanzamiento de excepcion si se intenta leer sin estar conectado
             raise RuntimeError("--Desde el simulador-- El dispositivo OBD-II no está conectado.")
 
-        # Evaluacion del PID solicitado para revoluciones del motor
+        # Evaluacion del PID solicitado para revoluciones del motor (RPM - PID 010C)
         if pid == "010C":
-            # Retorno de valor aleatorio flotante entre 800.0 y 3000.0 RPM redondeado a 2 decimales
             return round(random.uniform(800.0, 3000.0), 2)
 
-        # Evaluacion del PID solicitado para velocidad del vehiculo
+        # Evaluacion del PID solicitado para velocidad del vehiculo (km/h - PID 010D)
         elif pid == "010D":
-            # Retorno de valor aleatorio flotante entre 0.0 y 120.0 km/h redondeado a 2 decimales
             return round(random.uniform(0.0, 120.0), 2)
+
+        # Evaluacion del PID solicitado para temperatura del refrigerante (°C - PID 0105)
+        elif pid == "0105":
+            return round(random.uniform(85.0, 105.0), 2)
+
+        # Evaluacion del PID solicitado para porcentaje de carga del motor (% - PID 0104)
+        elif pid == "0104":
+            return round(random.uniform(15.0, 85.0), 2)
+
+        # Evaluacion del PID solicitado para posicion del acelerador (% - PID 0111)
+        elif pid == "0111":
+            return round(random.uniform(0.0, 100.0), 2)
+
+        # Evaluacion del PID solicitado para flujo de masa de aire MAF (g/s - PID 0110)
+        elif pid == "0110":
+            return round(random.uniform(2.0, 45.0), 2)
+
+        # Evaluacion del PID solicitado para voltaje del sensor de oxigeno O2 (V - PID 0114)
+        elif pid == "0114":
+            return round(random.uniform(0.10, 0.90), 2)
+
+        # Evaluacion del PID solicitado para temperatura del aire de admision IAT (°C - PID 010F)
+        elif pid == "010F":
+            return round(random.uniform(20.0, 45.0), 2)
+
+        # Evaluacion del PID solicitado para nivel de combustible (% - PID 012F)
+        elif pid == "012F":
+            return round(random.uniform(25.0, 95.0), 2)
+
+        # Evaluacion del PID solicitado para presion absoluta del multiple MAP (kPa - PID 010B)
+        elif pid == "010B":
+            return round(random.uniform(30.0, 105.0), 2)
 
         # Caso por defecto si se solicita un PID no soportado
         else:
