@@ -1,112 +1,107 @@
 """
-Módulo de la Barra de Estado de Conexión para Blar Plus.
+Módulo de Barra de Estado del Sistema Blar Plus.
 
-Implementa un indicador visual estilizado que simula el comportamiento de un LED
-para reflejar el estado actual del enlace físico o virtual con la ECU del vehículo.
+Proporciona un widget indicador visual con diodo emisor de luz (LED) y etiqueta
+textual para notificar al usuario el estado de conexión con la ECU en tiempo real.
 
 Autor: Estrada Loaiza Rogelio
 Capa: Interfaz Gráfica (GUI) / Capa 1
 """
 
-# Importacion de Optional para tipado de referencias que pueden ser nulas
+# Importación de Optional para anotaciones de tipo de widgets padre
 from typing import Optional
-# Importacion de componentes de la interfaz grafica desde PySide6.QtWidgets
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
+# Importación del objeto Qt de PySide6 para banderas de alineación
+from PySide6.QtCore import Qt
+# Importación de componentes base de PySide6 para construir el widget de barra de estado
+from PySide6.QtWidgets import (
+    QWidget,
+    QHBoxLayout,
+    QLabel,
+)
 
 
-# Clase BarraEstadoWidget que representa el indicador LED de conexion
+# Clase BarraEstadoWidget encargada de mostrar el estado de enlace y mensajes del sistema
 class BarraEstadoWidget(QWidget):
     """
-    Widget con indicador LED circular y etiqueta descriptiva de estado.
+    Widget de la barra de estado que incluye un indicador LED de color y texto descriptivo.
 
     Atributos:
-        led (QLabel): Componente gráfico estilizado como un LED redondo.
-        lbl_mensaje (QLabel): Etiqueta textual con la descripción del estado actual.
+        lbl_led (QLabel): Indicador gráfico circular que simula un LED (Verde/Rojo).
+        lbl_mensaje (QLabel): Etiqueta de texto de alto contraste para avisos del sistema.
     """
 
-    # Inicializador de la clase que recibe el widget padre opcional
+    # Constructor del widget de barra de estado
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         """
-        Inicializa la barra de estado y configura su apariencia.
+        Inicializa el widget y compone la interfaz visual de la barra de estado.
 
         Args:
-            parent (Optional[QWidget]): Widget padre opcional.
+            parent (Optional[QWidget]): Widget contenedor padre en la jerarquía.
         """
-        # Invocacion al constructor de la clase base QWidget
+        # Invocación del constructor base de QWidget
         super().__init__(parent)
-        # Llamada al metodo privado para estructurar la interfaz del widget
-        self._inicializar_ui()
+        # Llamada al método de inicialización de los componentes gráficos
+        self.inicializar_interfaz()
 
-    # Metodo para construir y organizar los elementos graficos de la barra de estado
-    def _inicializar_ui(self) -> None:
-        """Ensambla el diseño horizontal e inserta los componentes del indicador."""
-        # Creacion del layout horizontal asociado a este widget
-        layout = QHBoxLayout(self)
-        # Configuracion de margenes exteriores en izquierda, arriba, derecha y abajo
-        layout.setContentsMargins(8, 4, 8, 4)
-        # Espaciado interno en pixeles entre los widgets agregados
-        layout.setSpacing(8)
+    # Método para configurar y ensamblar la interfaz de la barra de estado
+    def inicializar_interfaz(self) -> None:
+        """Construye la distribución horizontal del indicador LED y la etiqueta de estado."""
+        # Creación del layout horizontal principal para la barra de estado
+        layout_principal = QHBoxLayout(self)
+        # Definición de márgenes reducidos para mantener una barra delgada y elegante
+        layout_principal.setContentsMargins(5, 5, 5, 5)
+        # Establecimiento de separación entre el indicador LED y el texto
+        layout_principal.setSpacing(10)
 
-        # Instanciacion de la etiqueta que funcionara como indicador LED
-        self.led = QLabel()
-        # Fijado de dimensiones cuadradas de 14x14 pixeles para el LED
-        self.led.setFixedSize(14, 14)
-        # Aplicacion inicial del color rojo indicando desconexion
-        self._aplicar_estilo_led("#ef4444")
+        # Instanciación de la etiqueta circular que simula el indicador LED
+        self.lbl_led = QLabel()
+        # Ajuste de dimensión fija cuadrada de 14x14 píxeles para el punto LED
+        self.lbl_led.setFixedSize(14, 14)
+        # Asignación de estilo inicial desconectado (LED Rojo)
+        self.lbl_led.setStyleSheet(
+            "background-color: #D9534F; border-radius: 7px; border: 1px solid #A94442;"
+        )
 
-        # Instanciacion de la etiqueta de texto con mensaje por defecto
-        self.lbl_mensaje = QLabel("Desconectado")
-        # Aplicacion de estilo CSS a la etiqueta para peso de fuente y color
-        self.lbl_mensaje.setStyleSheet("font-weight: 500; color: #333333;")
+        # Instanciación de la etiqueta de texto para los mensajes del sistema
+        self.lbl_mensaje = QLabel("Desconectado del vehículo.")
+        # Aplicación de estilo de alto contraste para visibilidad sobre fondo oscuro
+        self.lbl_mensaje.setStyleSheet(
+            "color: #E0E0E0; font-size: 13px; font-weight: bold;"
+        )
 
-        # Insercion del widget LED en el layout horizontal
-        layout.addWidget(self.led)
-        # Insercion de la etiqueta de mensaje en el layout horizontal
-        layout.addWidget(self.lbl_mensaje)
-        # Adicion de espacio flexible para empujar los elementos a la izquierda
-        layout.addStretch()
+        # Inserción del indicador LED en el layout horizontal
+        layout_principal.addWidget(self.lbl_led)
+        # Inserción de la etiqueta de texto con estiramiento elástico
+        layout_principal.addWidget(self.lbl_mensaje, stretch=1)
 
-    # Metodo para actualizar el estilo visual CSS de la etiqueta LED
-    def _aplicar_estilo_led(self, color_hex: str) -> None:
+    # Método público para actualizar dinámicamente el LED y el texto
+    def actualizar_estado(self, conectado: bool, mensaje: str) -> None:
         """
-        Aplica reglas CSS para dar formato de esfera luminosa al indicador.
+        Actualiza el color del LED y la descripción textual según el estado de la conexión.
 
         Args:
-            color_hex (str): Valor hexadecimal del color deseado (ej. '#22c55e').
+            conectado (bool): True si la ECU está conectada, False en caso contrario.
+            mensaje (str): Texto descriptivo del evento o estado del sistema.
         """
-        # Asignacion de la regla CSS que convierte el cuadrado en un circulo de color con borde
-        self.led.setStyleSheet(f"""
-            background-color: {color_hex};
-            border-radius: 7px;
-            border: 1px solid rgba(0, 0, 0, 0.25);
-        """)
-
-    # Metodo publico para cambiar dinamicamente el estado de la barra
-    def actualizar_estado(
-        self, conectado: bool, mensaje: str, reintentando: bool = False
-    ) -> None:
-        """
-        Actualiza el color del LED y el mensaje descriptivo en pantalla.
-
-        Args:
-            conectado (bool): Verdadero si existe conexión activa.
-            mensaje (str): Explicación del estado.
-            reintentando (bool): Verdadero si se encuentra procesando la reconexión.
-        """
-        # Evaluacion si el proceso esta reintentando conexion
-        if reintentando:
-            # Asignacion del color amarillo hexadecimal
-            color = "#eab308"
-        # Evaluacion si la conexion esta activa
-        elif conectado:
-            # Asignacion del color verde hexadecimal
-            color = "#22c55e"
-        # Si no hay conexion activa ni reintento
-        else:
-            # Asignacion del color rojo hexadecimal
-            color = "#ef4444"
-
-        # Aplicacion del nuevo color al indicador LED
-        self._aplicar_estilo_led(color)
-        # Actualizacion del texto explicativo en la etiqueta de mensaje
+        # Actualización del texto descriptivo en la etiqueta de mensaje
         self.lbl_mensaje.setText(mensaje)
+
+        # Evaluación de la bandera booleana de conexión
+        if conectado:
+            # Estilo de LED verde brillante cuando la conexión está activa
+            self.lbl_led.setStyleSheet(
+                "background-color: #5CB85C; border-radius: 7px; border: 1px solid #4CAE4C;"
+            )
+            # Resaltado del texto en verde claro de alto contraste
+            self.lbl_mensaje.setStyleSheet(
+                "color: #5CB85C; font-size: 13px; font-weight: bold;"
+            )
+        else:
+            # Estilo de LED rojo cuando el sistema está desconectado
+            self.lbl_led.setStyleSheet(
+                "background-color: #D9534F; border-radius: 7px; border: 1px solid #A94442;"
+            )
+            # Resaltado del texto en rojo/naranja claro de alto contraste
+            self.lbl_mensaje.setStyleSheet(
+                "color: #D9534F; font-size: 13px; font-weight: bold;"
+            )

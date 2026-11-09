@@ -14,7 +14,7 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 from typing import Optional
 # Importacion de constantes de alineacion y formato desde PySide6.QtCore
 from PySide6.QtCore import Qt
-# Importacion de componentes de cuadros de dialogo y botones desde PySide6.QtWidgets
+# Importacion de componentes de cuadros de dialogo, botones y layouts desde PySide6.QtWidgets
 from PySide6.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyle,
     QWidget,
+    QLayout,  # Importación añadida para controlar la restricción dinámica del tamaño del diálogo
 )
 
 
@@ -54,8 +55,8 @@ class DialogoConfirmacion(QDialog):
         self.setWindowTitle("Advertencia - Borrado de Códigos")
         # Activacion del modo modal para bloquear la ventana principal
         self.setModal(True)
-        # Ajuste de tamaño inicial a 420x200 pixeles
-        self.resize(420, 200)
+        # Ajuste de ancho mínimo a 460 píxeles permitiendo que la altura crezca dinámicamente sin recortes
+        self.setMinimumWidth(460)
 
         # Creacion del layout vertical principal del dialogo
         layout = QVBoxLayout(self)
@@ -63,6 +64,9 @@ class DialogoConfirmacion(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         # Configuracion de espaciado vertical entre elementos
         layout.setSpacing(15)
+
+        # Aplicación de restricción de tamaño para que el QDialog se expanda automáticamente según el texto
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
 
         # Layout horizontal para agrupar el icono de advertencia y el mensaje
         mensaje_layout = QHBoxLayout()
