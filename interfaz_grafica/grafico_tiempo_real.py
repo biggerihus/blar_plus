@@ -3,7 +3,8 @@ Módulo de Gráficos Técnicos en Tiempo Real para Blar Plus.
 
 Proporciona un widget especializado basado en pyqtgraph para renderizar datos
 continuos de sensores vehiculares a alta frecuencia, manteniendo una gestión de memoria
-eficiente mediante el uso de un buffer circular, auto-escalado dinámico y selección multisensores.
+eficiente mediante el uso de un buffer circular, auto-escalado dinámico bloqueado contra
+desplazamientos accidentales y selección multisensores.
 
 Autor: Estrada Loaiza Rogelio
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -11,8 +12,8 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 
 # Importación de deque para la implementación de buffers circulares con tamaño máximo
 from collections import deque
-# Importación de Dict, List, Optional y Tuple para anotaciones de tipo estrictas
-from typing import Dict, List, Optional, Tuple, Union
+# Importación de Dict, Optional, Tuple y Union para anotaciones de tipo estrictas
+from typing import Dict, Optional, Tuple, Union
 # Importación de componentes de layout, selector, lista y etiquetas de PySide6
 from PySide6.QtWidgets import (
     QWidget,
@@ -22,8 +23,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QListView,
 )
-# Importación de QColor para la definición de colores de alta visibilidad
-from PySide6.QtGui import QColor
 # Importación de la librería pyqtgraph especializada en graficado de alto rendimiento
 import pyqtgraph as pg
 
@@ -106,7 +105,7 @@ class GraficoTiempoRealWidget(QWidget):
 
         # Selector desplegable QComboBox para alternar el sensor mostrado en la gráfica
         self.combo_sensor = QComboBox()
-        
+
         # Aplicación del mismo CSS idéntico para garantizar coincidencia visual exacta
         self.combo_sensor.setStyleSheet("""
             QComboBox {
@@ -201,8 +200,13 @@ class GraficoTiempoRealWidget(QWidget):
         # Habilitación de cuadrícula visible en ejes X e Y con opacidad controlada
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
 
-        # Configuración de auto-escalado automático del eje Y para evitar que la gráfica quede plana
-        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+        # Bloqueo de zoom/arrastre con rueda o clic del ratón para evitar desincronización de la ventana
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.plot_widget.setMenuEnabled(False)
+        self.plot_widget.hideButtons()
+
+        # Auto-escalado continuo en ambos ejes (X temporal e Y de magnitud)
+        self.plot_widget.enableAutoRange(x=True, y=True)
 
         # Estilización de las etiquetas textuales del eje vertical (Y) e inferior (X)
         self.plot_widget.setLabel("left", "Valor del Sensor", color="#FFFFFF", size="10pt")
@@ -244,9 +248,6 @@ class GraficoTiempoRealWidget(QWidget):
         self.curva_activa.setPen(pen)
         self.curva_activa.setSymbolBrush(color_rgb)
 
-        # Forzar auto-escalado dinámico del Eje Y al cambiar de parámetro
-        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
-
         # Re-renderizar los datos almacenados en el buffer del nuevo sensor activo
         if self.sensor_activo_clave in self.sensores_data:
             buf_x, buf_y = self.sensores_data[self.sensor_activo_clave]
@@ -255,6 +256,9 @@ class GraficoTiempoRealWidget(QWidget):
                 ultimo_val = buf_y[-1]
                 self._actualizar_titulo_grafico(str(config["nombre"]), ultimo_val, str(config["unidad"]))
                 self._actualizar_etiqueta_estadisticas(self.sensor_activo_clave, ultimo_val)
+
+        # Garantizar auto-escalado dinámico en ambos ejes tras el cambio de parámetro
+        self.plot_widget.enableAutoRange(x=True, y=True)
 
     # Método para actualizar el título superior de la gráfica
     def _actualizar_titulo_grafico(self, nombre: str, valor: float, unidad: str) -> None:
@@ -342,3 +346,4 @@ class GraficoTiempoRealWidget(QWidget):
         self.contador_x = 0
         self.curva_activa.setData([], [])
         self.lbl_estadisticas.setText("Actual: -- | Mín: -- | Máx: --")
+        self.plot_widget.enableAutoRange(x=True, y=True)
