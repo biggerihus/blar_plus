@@ -3,7 +3,8 @@ Módulo de la Ventana Principal del Sistema Blar Plus.
 
 Centraliza el flujo de la aplicación ordenando las pantallas de Conductor y Mecánico,
 administrando el estado de la conexión e integrando los módulos gráficos y ventanas emergentes.
-Incluye estilos oscuros unificados y reactivos para todos los selectores desplegables.
+Incluye estilos oscuros unificados y reactivos para todos los selectores desplegables,
+así como recepción asíncrona de confirmaciones de borrado (Servicio 04) desde Capa 2.
 
 Autor: Estrada Loaiza Rogelio y Erick Polanco Romero
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -56,10 +57,20 @@ from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
 class VentanaPrincipal(QMainWindow):
     """
     Ventana principal de la interfaz de usuario Blar Plus.
+
+    Coordina las vistas de Conductor y Mecánico, administra el ciclo de conexión
+    con hardware real o simulador y procesa las señales asíncronas emitidas
+    por `TrabajadorOBD` (DTCs, telemetría, metadatos, errores y borrado Servicio 04).
     """
 
     # Constructor principal de la ventana
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """
+        Inicializa el estado interno de la ventana principal y construye la interfaz.
+
+        Args:
+            parent (Optional[QWidget]): Widget padre opcional en la jerarquía Qt.
+        """
         # Invocación del constructor base QMainWindow
         super().__init__(parent)
         # Bandera booleana del estado de conexión de la interfaz
@@ -73,22 +84,31 @@ class VentanaPrincipal(QMainWindow):
 
         # Instancia persistente del simulador para mantener el estado de intentos y secuencia de fallas
         self._adaptador_simulador: Optional[AdaptadorSimulador] = None
+        # Registro de las últimas RPM recibidas para validar condición KOEO antes de borrar DTCs
+        self._ultima_rpm: float = 0.0
 
         # Configuración de propiedades de la ventana principal
         self.setWindowTitle("Sistema de Monitoreo Vehicular - Blar Plus")
         self.resize(1100, 800)
-        
+
         # Construcción e inicialización de componentes visuales
         self.iniciar_interfaz()
 
     # Método para inyectar la instancia de TrabajadorOBD
     def set_trabajador_obd(self, trabajador: TrabajadorOBD) -> None:
-        """Inyecta la instancia de TrabajadorOBD y conecta sus señales Qt a la interfaz."""
+        """
+        Inyecta la instancia de `TrabajadorOBD` y conecta sus señales Qt a los slots de la GUI.
+
+        Args:
+            trabajador (TrabajadorOBD): Hilo secundario encargado del sondeo OBD-II.
+        """
         self.trabajador_obd = trabajador
         # Conexión de señal para actualizar banner con metadatos del vehículo
         self.trabajador_obd.info_vehiculo_recibida.connect(self.actualizar_info_vehiculo)
         # Conexión de señal para captura de errores y desconexiones físicas
         self.trabajador_obd.error_ocurrido.connect(self.recibir_error_asincrono)
+        # Conexión de señal para recibir el resultado exclusivo del borrado (Servicio 04)
+        self.trabajador_obd.borrado_completado.connect(self.recibir_resultado_borrado_asincrono)
 
     # Método para construir la estructura visual de la GUI
     def iniciar_interfaz(self) -> None:
@@ -308,7 +328,12 @@ class VentanaPrincipal(QMainWindow):
 
     # Método slot para actualizar el banner con información del vehículo
     def actualizar_info_vehiculo(self, info: dict) -> None:
-        """Actualiza el texto del banner dinámico superior con marca, VIN y protocolo."""
+        """
+        Actualiza el texto del banner dinámico superior con marca, VIN y protocolo.
+
+        Args:
+            info (dict): Diccionario con claves 'vehiculo', 'vin' y 'protocolo'.
+        """
         vehiculo = info.get("vehiculo", "Vehículo Estándar OBD-II")
         vin = info.get("vin", "N/D")
         protocolo = info.get("protocolo", "ISO 15765-4")
@@ -320,18 +345,24 @@ class VentanaPrincipal(QMainWindow):
     def recibir_error_asincrono(self, mensaje_error: str) -> None:
         """
         Resetea la interfaz a estado neutro tras una desconexión y despliega un cuadro de error modal.
+
+        Args:
+            mensaje_error (str): Descripción técnica del error reportado por Capa 2.
         """
         # Cambiar estado visual local a Desconectado
         self.estadoConexion = False
+        self._ultima_rpm = 0.0
         self.lbl_estado_texto.setText("Estado de Conexión: Error / Desconectado")
         self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
         self.barra_estado_widget.actualizar_estado(False, f"Error: {mensaje_error}")
         self.lbl_resumen.setText("Resumen rápido: Fallo de comunicación con el vehículo.")
         self.lbl_banner_vehiculo.setText("🚘 Vehículo Monitoreado: NINGUNO (Error de Conexión)")
 
-        # Re-habilitar los controles de selección de puerto y escaneo
+        # Re-habilitar los controles de selección de puerto, escaneo y borrado
         self.combo_puerto_modo.setEnabled(True)
         self.btn_refrescar_puertos.setEnabled(True)
+        if hasattr(self, "btn_borrar_dtc"):
+            self.btn_borrar_dtc.setEnabled(True)
 
         # Restablecer marcadores numéricos de la vista conductor a cero
         self.btn_vel.setText("Velocidad\n0.0 km/h")
@@ -427,18 +458,23 @@ class VentanaPrincipal(QMainWindow):
         splitter_mecanico.setSizes([320, 380])
         layout.addWidget(splitter_mecanico)
 
-        btn_borrar = QPushButton("Borrar Códigos de Diagnóstico (DTC)")
-        btn_borrar.setStyleSheet(
+        self.btn_borrar_dtc = QPushButton("Borrar Códigos de Diagnóstico (DTC)")
+        self.btn_borrar_dtc.setStyleSheet(
             "background-color: #d9534f; color: white; font-weight: bold; padding: 10px; border-radius: 4px;"
         )
-        btn_borrar.clicked.connect(self.abrir_dialogo_borrado)
-        layout.addWidget(btn_borrar)
+        self.btn_borrar_dtc.clicked.connect(self.abrir_dialogo_borrado)
+        layout.addWidget(self.btn_borrar_dtc)
 
         return widget
 
     # Método para actualizar tarjetas semaforizadas del conductor
     def actualizar_vista_conductor_dtcs(self, dtos: List[DTCDTO]) -> None:
-        """Genera tarjetas explicativas semaforizadas (🟢, 🟡, 🔴) según la gravedad de las fallas."""
+        """
+        Genera tarjetas explicativas semaforizadas (🟢, 🟡, 🔴) según la gravedad de las fallas.
+
+        Args:
+            dtos (List[DTCDTO]): Lista de objetos DTCDTO enriquecidos desde Capa 2/3.
+        """
         # Limpiar el layout actual
         while self.layout_fallas_conductor.count():
             item = self.layout_fallas_conductor.takeAt(0)
@@ -543,14 +579,17 @@ class VentanaPrincipal(QMainWindow):
         else:
             # Rutina de Desconexión controlada
             self.estadoConexion = False
+            self._ultima_rpm = 0.0
             self.lbl_estado_texto.setText("Estado de Conexión: Desconectado")
             self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
             self.barra_estado_widget.actualizar_estado(False, "Desconectado del vehículo.")
             self.lbl_resumen.setText("Resumen rápido: Advertencia - Equipo desconectado.")
 
-            # Re-habilitar los controles de selección de puerto y escaneo
+            # Re-habilitar los controles de selección de puerto, escaneo y borrado
             self.combo_puerto_modo.setEnabled(True)
             self.btn_refrescar_puertos.setEnabled(True)
+            if hasattr(self, "btn_borrar_dtc"):
+                self.btn_borrar_dtc.setEnabled(True)
 
             if self.trabajador_obd:
                 self.trabajador_obd.pausar_sondeo()
@@ -576,7 +615,12 @@ class VentanaPrincipal(QMainWindow):
 
     # Slot para recibir la lista de códigos DTC crudos desde el hilo secundario
     def recibir_dtcs_asincronos(self, dtcs_raw: List[str]) -> None:
-        """Slot receptor para actualizar la lista de DTCs en la GUI."""
+        """
+        Slot receptor para actualizar la lista de DTCs en la GUI.
+
+        Args:
+            dtcs_raw (List[str]): Lista de códigos DTC crudos emitidos por `TrabajadorOBD`.
+        """
         if not self.estadoConexion:
             return
 
@@ -593,12 +637,18 @@ class VentanaPrincipal(QMainWindow):
 
     # Slot para recibir lecturas continuas de sensores desde el hilo secundario
     def recibir_sensores_asincronos(self, datos_sensores: dict) -> None:
-        """Slot receptor para actualizar marcadores y gráfica en vivo."""
+        """
+        Slot receptor para actualizar marcadores y gráfica en vivo.
+
+        Args:
+            datos_sensores (dict): Diccionario con valores numéricos de los 10 PIDs OBD-II.
+        """
         if not self.estadoConexion:
             return
 
         velocidad = datos_sensores.get("velocidad", 0.0)
         temperatura = datos_sensores.get("temperatura", 0.0)
+        self._ultima_rpm = float(datos_sensores.get("rpm", 0.0))
 
         self.btn_vel.setText(f"Velocidad\n{velocidad:.1f} km/h")
         self.btn_temp.setText(f"Temperatura Motor\n{temperatura:.1f} °C")
@@ -609,12 +659,21 @@ class VentanaPrincipal(QMainWindow):
 
     # Slot para cambiar vista en QStackedWidget
     def cambiar_vista(self, index: int) -> None:
-        """Cambia el panel visual activo (Conductor o Mecánico)."""
+        """
+        Cambia el panel visual activo (Conductor o Mecánico).
+
+        Args:
+            index (int): Índice de la pestaña en `QStackedWidget` (0=Conductor, 1=Mecánico).
+        """
         self.stacked_vistas.setCurrentIndex(index)
 
-    # Slot para solicitar el borrado de códigos DTC a la ECU
+    # Slot para solicitar el borrado asíncrono de códigos DTC a la ECU
     def abrir_dialogo_borrado(self) -> None:
-        """Despliega cuadro de borrado de códigos DTC previa verificación de conexión."""
+        """
+        Despliega cuadro de confirmación de borrado (Servicio 04) previa verificación
+        de conexión y condición KOEO, encolando la orden en `TrabajadorOBD` para evitar
+        colisiones en el puerto serial.
+        """
         if not self.estadoConexion:
             QMessageBox.warning(
                 self,
@@ -625,33 +684,79 @@ class VentanaPrincipal(QMainWindow):
 
         # Recuperar selección específica desde el componente de lista
         codigos_seleccionados = self.lista_dtc_widget.obtener_codigos_seleccionados()
+        hay_seleccion_parcial = 0 < len(codigos_seleccionados) < len(self.reportes_actuales)
+        motor_encendido = self._ultima_rpm > 100.0
 
-        # Desplegar diálogo modal
-        dialogo = DialogoConfirmacion(self)
+        # Desplegar diálogo modal con advertencias técnicas SAE J1979
+        dialogo = DialogoConfirmacion(
+            self,
+            motor_encendido=motor_encendido,
+            hay_seleccion_parcial=hay_seleccion_parcial,
+        )
         resultado = dialogo.exec()
 
         if resultado == QDialog.DialogCode.Accepted:
             if self.trabajador_obd:
-                # Enviar solicitud asíncrona de borrado a través del controlador hardware
+                # Deshabilitar temporalmente el botón mientras el hilo secundario ejecuta Servicio 04
+                if hasattr(self, "btn_borrar_dtc"):
+                    self.btn_borrar_dtc.setEnabled(False)
+                self.barra_estado_widget.actualizar_estado(
+                    True, "Enviando orden de borrado (Servicio 04) a la ECU..."
+                )
+                # Encolar solicitud thread-safe; la respuesta llegará en recibir_resultado_borrado_asincrono
                 self.trabajador_obd.solicitar_limpieza_dtc(
                     codigos_seleccionados if codigos_seleccionados else None
                 )
-
-            # Reflejo optimista de la eliminación en la memoria local
-            if codigos_seleccionados:
-                self.reportes_actuales = [
-                    dto for dto in self.reportes_actuales if dto.codigo not in codigos_seleccionados
-                ]
-                mensaje = f"Se borraron {len(codigos_seleccionados)} código(s) seleccionado(s)."
             else:
-                self.reportes_actuales = []
-                mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
-
-            self.barra_estado_widget.actualizar_estado(True, mensaje)
-            self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
-            self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
+                # Respaldo directo si la ventana se ejecuta aislada sin hilo trabajador
+                self.recibir_resultado_borrado_asincrono(True, codigos_seleccionados)
         else:
             self.barra_estado_widget.actualizar_estado(True, "Operación de borrado cancelada por el usuario.")
+
+    # Slot receptor del resultado del borrado ejecutado exclusivamente por el hilo OBD
+    def recibir_resultado_borrado_asincrono(
+        self, exito_borrado: bool, codigos_borrados: list
+    ) -> None:
+        """
+        Procesa en el hilo principal (GUI) la confirmación o rechazo del Servicio 04
+        emitida por `TrabajadorOBD` tras comunicarse con el adaptador.
+
+        Args:
+            exito_borrado (bool): True si la ECU confirmó el borrado; False si lo rechazó.
+            codigos_borrados (list): Lista de códigos específicos solicitados o lista vacía si fue global.
+        """
+        if hasattr(self, "btn_borrar_dtc"):
+            self.btn_borrar_dtc.setEnabled(True)
+
+        if not self.estadoConexion:
+            return
+
+        if not exito_borrado:
+            self.barra_estado_widget.actualizar_estado(
+                True, "La ECU rechazó el borrado de códigos DTC."
+            )
+            QMessageBox.warning(
+                self,
+                "Borrado Rechazado por la ECU",
+                "La computadora del vehículo no aceptó la solicitud de borrado (Servicio 04).\n\n"
+                "Verifique que el motor esté apagado con el switch en posición ON (KOEO) "
+                "e inténtelo nuevamente."
+            )
+            return
+
+        # Actualización de la vista local tras confirmación positiva de la ECU
+        if codigos_borrados:
+            self.reportes_actuales = [
+                dto for dto in self.reportes_actuales if dto.codigo not in codigos_borrados
+            ]
+            mensaje = f"Se borraron {len(codigos_borrados)} código(s) seleccionado(s)."
+        else:
+            self.reportes_actuales = []
+            mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
+
+        self.barra_estado_widget.actualizar_estado(True, mensaje)
+        self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
+        self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
 
 
 # Punto de entrada directo de la GUI si se ejecuta este script por separado
