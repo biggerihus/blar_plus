@@ -12,10 +12,14 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 
 # Importación del módulo sys para gestión de argumentos de ejecución
 import sys
+# Importación de warnings para suprimir avisos benignos de desconexión de señales Qt
+import warnings
 # Importación de tipado estricto
 from typing import List, Optional
 # Importación de alineación, temporizador y orientaciones de Qt
 from PySide6.QtCore import Qt, QTimer
+# Importación para el cierre seguro de hilos al cerrar la ventana
+from PySide6.QtGui import QCloseEvent
 # Importación de widgets principales de PySide6 (incluyendo QListView para forzar delegado de QSS)
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,12 +45,12 @@ from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
 
 # Importación de la barra de estado con indicador LED
 from interfaz_grafica.barra_estado import BarraEstadoWidget
+# Importación del cuadro modal de confirmación
+from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
 # Importación del gráfico dinámico pyqtgraph
 from interfaz_grafica.grafico_tiempo_real import GraficoTiempoRealWidget
 # Importación del widget de tabla DTC
 from interfaz_grafica.lista_dtc import ListaDTCWidget
-# Importación del cuadro modal de confirmación
-from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
 # Importación del controlador y DTO
 from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
 # Importación de la clase TrabajadorOBD para anotación de tipos
@@ -718,12 +722,12 @@ class VentanaPrincipal(QMainWindow):
         self, exito_borrado: bool, codigos_borrados: list
     ) -> None:
         """
-        Procesa en el hilo principal (GUI) la confirmación o rechazo del Servicio 04
-        emitida por `TrabajadorOBD` tras comunicarse con el adaptador.
+        Procesa la respuesta asíncrona del borrado de códigos (Servicio 04)
+        emitida por `TrabajadorOBD` y actualiza las vistas y la barra de estado.
 
         Args:
-            exito_borrado (bool): True si la ECU confirmó el borrado; False si lo rechazó.
-            codigos_borrados (list): Lista de códigos específicos solicitados o lista vacía si fue global.
+            exito_borrado (bool): True si la ECU confirmó el borrado; False en caso de fallo.
+            codigos_borrados (list): Lista de códigos solicitados o vacía si se limpió toda la memoria.
         """
         if hasattr(self, "btn_borrar_dtc"):
             self.btn_borrar_dtc.setEnabled(True)
@@ -731,35 +735,67 @@ class VentanaPrincipal(QMainWindow):
         if not self.estadoConexion:
             return
 
-        if not exito_borrado:
+        if exito_borrado:
+            if codigos_borrados:
+                codigos_set = set(codigos_borrados)
+                self.reportes_actuales = [
+                    dto for dto in self.reportes_actuales if dto.codigo not in codigos_set
+                ]
+            else:
+                self.reportes_actuales = []
+
+            self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
+            self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
             self.barra_estado_widget.actualizar_estado(
-                True, "La ECU rechazó el borrado de códigos DTC."
+                True, "Códigos DTC borrados exitosamente de la ECU."
+            )
+            QMessageBox.information(
+                self,
+                "Borrado Exitoso",
+                "Los códigos de diagnóstico (DTC) fueron borrados correctamente de la computadora del vehículo."
+            )
+        else:
+            self.barra_estado_widget.actualizar_estado(
+                True, "No se pudo completar el borrado de códigos DTC."
             )
             QMessageBox.warning(
                 self,
                 "Borrado Rechazado por la ECU",
-                "La computadora del vehículo no aceptó la solicitud de borrado (Servicio 04).\n\n"
-                "Verifique que el motor esté apagado con el switch en posición ON (KOEO) "
-                "e inténtelo nuevamente."
+                "La ECU rechazó o no respondió a la orden de borrado (Servicio 04).\n"
+                "Verifique que el interruptor esté en posición ON y el motor apagado."
             )
-            return
 
-        # Actualización de la vista local tras confirmación positiva de la ECU
-        if codigos_borrados:
-            self.reportes_actuales = [
-                dto for dto in self.reportes_actuales if dto.codigo not in codigos_borrados
-            ]
-            mensaje = f"Se borraron {len(codigos_borrados)} código(s) seleccionado(s)."
-        else:
-            self.reportes_actuales = []
-            mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
+    # Evento de cierre seguro de la ventana principal
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Intercepta el cierre de la ventana para bloquear el procesamiento de tramas
+        entrantes, desconectar las señales asíncronas y detener `TrabajadorOBD`
+        antes de destruir los widgets de la interfaz.
+        """
+        self.estadoConexion = False
 
-        self.barra_estado_widget.actualizar_estado(True, mensaje)
-        self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
-        self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
+        if self.trabajador_obd is not None:
+            pares_senal_slot = (
+                (self.trabajador_obd.datos_recibidos, self.recibir_dtcs_asincronos),
+                (self.trabajador_obd.sensores_recibidos, self.recibir_sensores_asincronos),
+                (self.trabajador_obd.info_vehiculo_recibida, self.actualizar_info_vehiculo),
+                (self.trabajador_obd.error_ocurrido, self.recibir_error_asincrono),
+                (self.trabajador_obd.borrado_completado, self.recibir_resultado_borrado_asincrono),
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                for senal, slot in pares_senal_slot:
+                    try:
+                        senal.disconnect(slot)
+                    except (RuntimeError, TypeError):
+                        pass
+
+            self.trabajador_obd.detener()
+
+        event.accept()
+        super().closeEvent(event)
 
 
-# Punto de entrada directo de la GUI si se ejecuta este script por separado
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = VentanaPrincipal()
