@@ -4,7 +4,7 @@ Módulo de Diálogo Modal de Confirmación para Blar Plus.
 Este módulo implementa una ventana modal de seguridad (QDialog) que interrumpe
 el flujo principal para solicitar la confirmación explícita del usuario antes de
 ejecutar operaciones críticas en el vehículo, tales como la depuración o borrado
-de la memoria de códigos de falla (DTC) de la ECU.
+de la memoria de códigos de falla (DTC) de la ECU mediante el Servicio 04 OBD-II.
 
 Autor: Estrada Loaiza Rogelio
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QStyle,
     QWidget,
-    QLayout,  # Importación añadida para controlar la restricción dinámica del tamaño del diálogo
+    QLayout,
 )
 
 
@@ -34,7 +34,7 @@ class DialogoConfirmacion(QDialog):
     Diálogo modal de advertencia de seguridad para la confirmación de acciones destructivas.
 
     Bloquea la interacción con la ventana principal hasta que el usuario elija
-    aceptar o rechazar la acción propuesta.
+    aceptar o rechazar la acción propuesta, informando las condiciones estándar OBD-II.
 
     Atributos:
         boton_aceptar (QPushButton): Botón que confirma la acción y emite QDialog.Accepted.
@@ -42,21 +42,28 @@ class DialogoConfirmacion(QDialog):
     """
 
     # Constructor de la ventana modal que configura componentes y dimensiones
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        motor_encendido: bool = False,
+        hay_seleccion_parcial: bool = False,
+    ) -> None:
         """
         Inicializa la ventana modal y configura la disposición de sus componentes visuales.
 
         Args:
             parent (Optional[QWidget]): Widget padre opcional en la jerarquía de Qt.
+            motor_encendido (bool): True si las RPM actuales son mayores a 0.
+            hay_seleccion_parcial (bool): True si el usuario marcó casillas individuales.
         """
         # Invocacion del constructor base de QDialog
         super().__init__(parent)
         # Definicion del titulo de la ventana en la barra superior
-        self.setWindowTitle("Advertencia - Borrado de Códigos")
+        self.setWindowTitle("Advertencia - Borrado de Códigos (Modo 04)")
         # Activacion del modo modal para bloquear la ventana principal
         self.setModal(True)
-        # Ajuste de ancho mínimo a 460 píxeles permitiendo que la altura crezca dinámicamente sin recortes
-        self.setMinimumWidth(460)
+        # Ajuste de ancho mínimo a 480 píxeles permitiendo que la altura crezca dinámicamente sin recortes
+        self.setMinimumWidth(480)
 
         # Creacion del layout vertical principal del dialogo
         layout = QVBoxLayout(self)
@@ -82,12 +89,29 @@ class DialogoConfirmacion(QDialog):
         # Insercion del icono alineado a la parte superior del contenedor
         mensaje_layout.addWidget(icono_label, alignment=Qt.AlignmentFlag.AlignTop)
 
+        # Construccion dinamica de avisos tecnicos segun estado del vehiculo y seleccion
+        avisos_extra = ""
+        if hay_seleccion_parcial:
+            avisos_extra += (
+                "<br><br><span style='color: #F0AD4E;'><b>Nota de Estándar SAE J1979:</b> "
+                "En vehículos reales, el Servicio 04 OBD-II borra <b>toda la memoria de fallas</b> "
+                "de la ECU de forma global, independientemente de las casillas marcadas.</span>"
+            )
+
+        if motor_encendido:
+            avisos_extra += (
+                "<br><br><span style='color: #FF6B6B;'><b>⚠️ Motor en Marcha Detectado:</b> "
+                "La mayoría de las ECUs rechazan el borrado con el motor encendido. Se recomienda "
+                "apagar el motor y dejar únicamente el switch en posición <b>ON (KOEO)</b>.</span>"
+            )
+
         # Instanciacion de la etiqueta con el mensaje de advertencia redactado en HTML
         texto_advertencia = QLabel(
             "<b>¡Advertencia de Seguridad!</b><br><br>"
-            "Está a punto de borrar los códigos de diagnóstico almacenados "
-            "en la memoria del vehículo. Esta acción es permanente y eliminará "
-            "el historial de fallas registradas.<br><br>"
+            "Está a punto de enviar la orden de borrado (Servicio 04) a la ECU del vehículo. "
+            "Esta acción es permanente, eliminará el historial de fallas, los datos congelados "
+            "(<i>Freeze Frame</i>) y reiniciará los monitores de emisiones."
+            f"{avisos_extra}<br><br>"
             "¿Desea continuar con el borrado?"
         )
         # Habilitacion de ajuste de texto automatico en multiples lineas
@@ -114,7 +138,7 @@ class DialogoConfirmacion(QDialog):
         # Instanciacion del boton Cancelar
         self.boton_cancelar = QPushButton("Cancelar")
         # Instanciacion del boton Confirmar
-        self.boton_aceptar = QPushButton("Confirmar")
+        self.boton_aceptar = QPushButton("Confirmar Borrado")
 
         # Aplicacion de estilo CSS rojo de advertencia al boton aceptar
         self.boton_aceptar.setStyleSheet(

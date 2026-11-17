@@ -4,8 +4,11 @@ Suite de Pruebas Unitarias Integradas para la Capa de Control y Concurrencia.
 Evalúa:
 1. El sondeo continuo a 10 Hz y detención limpia en `TrabajadorOBD`.
 2. La captura y emisión de errores al fallar la conexión inicial en `TrabajadorOBD`.
-3. La transformación de cadenas crudas a objetos `DTCDTO` en `ControladorReporte`.
-4. La acumulación de reportes en el historial de sesión.
+3. El encolado thread-safe y ejecución exclusiva del borrado de DTCs (`Servicio 04`)
+   dentro del hilo secundario `TrabajadorOBD`.
+4. La transformación de cadenas crudas a objetos `DTCDTO` en `ControladorReporte`
+   integrado con `EnriquecedorDTC` y SQLite.
+5. La acumulación de reportes en el historial de sesión.
 
 Autor: Erick Polanco Romero
 Capa: Pruebas Unitarias - Núcleo y Controladores / Capa 2
@@ -79,13 +82,42 @@ def test_trabajador_obd_falla_conexion_inicial(qtbot: QtBot) -> None:
     trabajador.detener()
 
 
-# Prueba para validar la transformación de tramas crudas DTC a objetos DTO
+# Prueba para verificar el encolado thread-safe y ejecución exclusiva del borrado en el hilo OBD
+def test_trabajador_obd_borrado_asincrono_exclusivo(qtbot: QtBot) -> None:
+    """
+    Verifica que `solicitar_limpieza_dtc` encole la petición y sea el propio hilo
+    secundario `TrabajadorOBD` quien invoque `limpiar_dtc` y emita `borrado_completado`.
+    """
+    mock_adaptador = MagicMock(spec=IAdaptadorOBD)
+    mock_adaptador.conectar.return_value = True
+    mock_adaptador.leer_dtc.return_value = ["P0300", "P0171"]
+    mock_adaptador.leer_pid.return_value = 0.0
+    mock_adaptador.limpiar_dtc.return_value = True
+
+    trabajador = TrabajadorOBD(adaptador=mock_adaptador)
+
+    try:
+        trabajador.iniciar_sondeo()
+        trabajador.start()
+
+        with qtbot.waitSignal(trabajador.borrado_completado, timeout=1500) as blocker:
+            encolado = trabajador.solicitar_limpieza_dtc(["P0300"])
+            assert encolado is True
+
+        assert blocker.args == [True, ["P0300"]]
+        mock_adaptador.limpiar_dtc.assert_called_once_with(["P0300"])
+    finally:
+        trabajador.detener()
+        assert not trabajador.isRunning()
+
+
+# Prueba para validar la transformación de tramas crudas DTC a objetos DTO vía SQLite
 def test_controlador_reporte_procesar_dtcs_raw() -> None:
-    """Evalúa la conversión de códigos crudos a objetos `DTCDTO` enriquecidos."""
-    # Instanciación del controlador de reportes
+    """Evalúa la conversión de códigos crudos a objetos `DTCDTO` enriquecidos desde Capa 3."""
+    # Instanciación del controlador de reportes conectado a EnriquecedorDTC
     controlador = ControladorReporte()
-    # Lista de prueba con códigos catalogados y uno no catalogado
-    dtcs_raw = ["P0300", "P0113", "P9999"]
+    # Lista de prueba con códigos catalogados en SQLite (P0300, P0171) y uno fuera de catálogo (P9999)
+    dtcs_raw = ["P0300", "P0171", "P9999"]
 
     # Procesamiento de la lista cruda
     dtos = controlador.procesar_dtcs_raw(dtcs_raw)
@@ -95,15 +127,22 @@ def test_controlador_reporte_procesar_dtcs_raw() -> None:
     # Verificación de instancia válida de DTCDTO
     assert isinstance(dtos[0], DTCDTO)
 
-    # Verificación del primer código catalogado (P0300)
+    # Verificación del primer código catalogado en SQLite (P0300)
     assert dtos[0].codigo == "P0300"
     assert dtos[0].categoria == "Encendido"
     assert dtos[0].gravedad == "Alta"
 
-    # Verificación de la plantilla por defecto para el código no catalogado (P9999)
+    # Verificación del segundo código catalogado en SQLite (P0171 - Mezcla pobre)
+    assert dtos[1].codigo == "P0171"
+    assert dtos[1].categoria == "Combustible"
+    assert dtos[1].gravedad == "Media"
+    assert "pobre" in dtos[1].descripcion.lower()
+
+    # Verificación de la decodificación estructural SAE J2012 para código no catalogado (P9999)
     assert dtos[2].codigo == "P9999"
-    assert dtos[2].categoria == "General"
-    assert "no catalogado" in dtos[2].descripcion.lower()
+    assert dtos[2].categoria == "Transmisión"
+    assert dtos[2].gravedad == "Media"
+    assert "P9999" in dtos[2].descripcion
 
 
 # Prueba para verificar la acumulación de reportes en el historial de sesión

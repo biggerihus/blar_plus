@@ -1,5 +1,15 @@
+# ==============================================================================
+# Dependencias del Sistema de Monitoreo Vehicular - Blar Plus
+# Autor: Equipo BLAR (UACM)
+# ==============================================================================
+
+# --- Dependencias de Ejecución (Producción) ---
 PySide6>=6.5.0
 pyqtgraph>=0.13.0
 pyserial>=3.5
 requests>=2.31.0
+
+# --- Dependencias de Pruebas Automatizadas y Empaquetado (Desarrollo) ---
 pytest>=7.4.0
+pytest-qt>=4.4.0
+pyinstaller>=6.0.0
