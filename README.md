@@ -136,6 +136,102 @@ python3 -m pytest -v
 * `tests/test_integracion.py`: Flujos End-to-End completos (HAL $\rightarrow$ `QThread` $\rightarrow$ GUI), alertas críticas de conexión/desconexión y borrado asíncrono. **(4/4 Passed)**
 
 ---
+## 🎨 Integración del Icono y Compilación Portable en Ubuntu
+
+### 1. Integración de identidad gráfica
+
+Se incorporaron los recursos gráficos personalizados de BlarPlus:
+
+- `recursos/icono.png`: icono utilizado por la aplicación Qt y el lanzador de Ubuntu.
+
+- `recursos/icono.ico`: recurso gráfico conservado en el proyecto.
+
+
+Se actualizó `main.py` para configurar:
+
+- Nombre de aplicación: `BlarPlus`.
+
+- Identificador de escritorio: `blarplus`.
+
+- Carga dinámica del icono mediante `QIcon`.
+
+- Detección de rutas de recursos en desarrollo y ejecución compilada.
+
+- Asignación del icono a `QApplication` y `VentanaPrincipal`.
+
+
+### 2. Configuración de PyInstaller
+
+Se actualizó `BlarPlus.spec` para incluir:
+
+- Base de datos SQLite: `capa_de_datos/dtc_database.db`.
+
+- Icono personalizado: `recursos/icono.png`.
+
+- Archivos de datos necesarios de `pyqtgraph`.
+
+
+Se conservó la arquitectura original de cuatro capas y la compilación en modo ONEDIR.
+
+### 3. Entorno de compilación
+
+- Sistema operativo: Ubuntu 26.04.1 LTS.
+
+- Arquitectura: AMD64.
+
+- Python: 3.14.4.
+
+- PySide6: 6.12.0.
+
+- PyInstaller: 6.22.3.
+
+
+Comando de compilación:
+
+```bash
+python -m PyInstaller --noconfirm --clean BlarPlus.spec
+```
+
+### 4. Validación del ejecutable portable
+
+Se generó y probó el ejecutable independiente en `dist/BlarPlus/`.
+
+Se comprobó:
+
+- Ejecución sin activar el entorno virtual `.venv`.
+
+- Carga correcta del icono personalizado.
+
+- Inclusión y acceso a la base de datos SQLite.
+
+- Inicio correcto del simulador OBD-II.
+
+- Funcionamiento del lanzador `.desktop`.
+
+- Visualización del icono en el Dock y en Mostrar aplicaciones de Ubuntu.
+
+
+### 5. Pruebas automatizadas
+
+Se ejecutaron satisfactoriamente las 22 pruebas automatizadas del proyecto.
+
+**22/22 pruebas aprobadas.**
+
+### 6. Estado de distribución
+
+La compilación portable ONEDIR y su integración con Ubuntu funcionan correctamente.
+
+Queda pendiente:
+
+- Construcción del paquete instalable `BlarPlus.deb`.
+
+- Instalación en `/opt/blarplus`.
+
+- Configuración de instalación y desinstalación mediante el administrador de paquetes.
+
+- Validación de compatibilidad con Ubuntu 24.04 y Ubuntu 22.04.
+
+---
 
 ## 📄 Licencia
 

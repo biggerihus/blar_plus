@@ -7,6 +7,7 @@ block_cipher = None
 # Recolección explícita de la base de datos SQLite y recursos de pyqtgraph
 datas = [
     ('capa_de_datos/dtc_database.db', 'capa_de_datos'),
+    ('recursos/icono.png', 'recursos'),
 ] + collect_data_files('pyqtgraph')
 
 hiddenimports = [

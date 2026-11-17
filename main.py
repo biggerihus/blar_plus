@@ -15,6 +15,9 @@ import sys
 # Importación de QApplication para el bucle principal de eventos gráficos Qt6
 from PySide6.QtWidgets import QApplication
 
+from pathlib import Path
+from PySide6.QtGui import QIcon
+
 # Importación de los adaptadores concretos de Capa 4 (HAL)
 from abstraccion_de_hardware.adaptador_elm327 import AdaptadorELM327
 from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
@@ -28,8 +31,29 @@ def main() -> None:
     """Inicializa la interfaz gráfica, configura el hilo OBD-II y ejecuta la aplicación."""
     app = QApplication(sys.argv)
 
+    # Configuración de identidad e icono de la aplicación ********************************
+    app.setApplicationName("BlarPlus")
+    app.setDesktopFileName("blarplus")
+
+    # Detectar la ubicación de recursos en desarrollo o aplicación compilada
+    if getattr(sys, "frozen", False):
+        ruta_base = Path(sys._MEIPASS)
+    else:
+        ruta_base = Path(__file__).resolve().parent
+
+    ruta_icono = ruta_base / "recursos" / "icono.png"
+    icono_app = QIcon(str(ruta_icono))
+
+    print(f"Ruta del icono: {ruta_icono}")
+    print(f"Archivo encontrado: {ruta_icono.is_file()}")
+    print(f"Icono cargado: {not icono_app.isNull()}")
+
+    app.setWindowIcon(icono_app)
+    # **************************************
+
     # Instanciación de la ventana principal (inicializa internamente ControladorReporte y SQLite)
     ventana_principal = VentanaPrincipal()
+    ventana_principal.setWindowIcon(icono_app)
 
     # Detección de hardware inicial según argumentos CLI o puertos serie disponibles
     puertos_detectados = AdaptadorELM327.detectar_puertos()
