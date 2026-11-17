@@ -1,124 +1,66 @@
 """
-Punto de Entrada Principal e Integrador del Sistema Blar Plus.
+Punto de Entrada Principal del Sistema de Monitoreo Vehicular Blar Plus.
 
-Este módulo se encarga de instanciar e interconectar todas las capas de la arquitectura:
-- Capa de Abstracción de Hardware (Adaptador OBD / Simulador).
-- Capa Núcleo y Concurrencia (Hilo secundario de sondeo en segundo plano).
-- Capa de Interfaz Gráfica (Ventana Principal PySide6).
+Orquesta la inicialización de la aplicación Qt, detecta el hardware disponible
+(adaptador físico ELM327 USB o Modo Simulador), enlaza las señales asíncronas
+entre Capa 2 (`TrabajadorOBD`) y Capa 1 (`VentanaPrincipal`) y garantiza el
+cierre limpio del hilo secundario al finalizar la ejecución.
 
-Soporta selección de modo (Simulador vs ELM327 Real) mediante argumentos de consola o la interfaz gráfica.
-
-Autor: Equipo Blar Plus
+Autor: Equipo BLAR (UACM)
+Capa: Orquestación / Punto de Entrada
 """
 
-# Importación del módulo argparse para procesar argumentos de línea de comandos
-import argparse
-# Importación del módulo de sistema para argumentos y salida del proceso
+# Importación del módulo sys para gestión de argumentos CLI y código de salida
 import sys
-
-# Importación de la clase principal de PySide6 para la gestión del bucle de eventos Qt
+# Importación de QApplication para el bucle principal de eventos gráficos Qt6
 from PySide6.QtWidgets import QApplication
 
-# Importación de los adaptadores de hardware (Simulador y ELM327 Real)
+# Importación de los adaptadores concretos de Capa 4 (HAL)
 from abstraccion_de_hardware.adaptador_elm327 import AdaptadorELM327
 from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
-
-# Importación de la clase del hilo secundario encargado del sondeo asíncrono a 10 Hz
-from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
-
-# Importación de la ventana principal de la interfaz gráfica de usuario
+# Importación de la ventana principal de Capa 1 (GUI)
 from interfaz_grafica.ventana_principal import VentanaPrincipal
+# Importación del gestor de concurrencia de Capa 2 (Núcleo)
+from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
 
 
 def main() -> None:
-    # Configuración del parseador de argumentos por línea de comandos
-    parser = argparse.ArgumentParser(description="Escáner Automotriz Blar Plus")
-    # Argumento para seleccionar el modo de operación del escáner
-    parser.add_argument(
-        "--modo",
-        choices=["simulador", "real"],
-        default="real",  # era simulador 
-        help="Modo de operación del hardware: 'simulador' o 'real'",
-    )
-    # Argumento para definir el puerto serie del dispositivo físico
-    parser.add_argument(
-        "--puerto",
-        default="/dev/ttyUSB0",
-        help="Puerto USB/Serie para el escáner ELM327 (por defecto: /dev/ttyUSB0)",
-    )
-    # Procesamiento de los argumentos ingresados en consola
-    args = parser.parse_args()
-
-    # Instanciar la aplicación Qt encargada de administrar el ciclo de vida y eventos
+    """Inicializa la interfaz gráfica, configura el hilo OBD-II y ejecuta la aplicación."""
     app = QApplication(sys.argv)
 
-    # Selección e instanciación del adaptador de hardware según los argumentos de consola
-    if args.modo == "real":
-        print(f"[!] Iniciando escáner en MODO REAL conectando a {args.puerto}...")
-        adaptador_hardware = AdaptadorELM327()
-    else:
-        print("[+] Iniciando escáner en MODO SIMULADOR...")
-        adaptador_hardware = AdaptadorSimulador()
-
-    # Instanciar el contenedor de la interfaz gráfica principal
+    # Instanciación de la ventana principal (inicializa internamente ControladorReporte y SQLite)
     ventana_principal = VentanaPrincipal()
 
-    # Si se especificó el modo real por consola, sincronizar el selector visual de la GUI
-    if args.modo == "real":
-        index = ventana_principal.combo_puerto_modo.findData(args.puerto)
-        if index != -1:
-            ventana_principal.combo_puerto_modo.setCurrentIndex(index)
+    # Detección de hardware inicial según argumentos CLI o puertos serie disponibles
+    puertos_detectados = AdaptadorELM327.detectar_puertos()
+    forzar_simulador = "--simulador" in sys.argv
 
-    # Instanciar el hilo secundario (QThread), inyectándole el adaptador de hardware seleccionado
-    trabajador_obd = TrabajadorOBD(adaptador=adaptador_hardware)
+    if forzar_simulador or not puertos_detectados:
+        print("[!] Iniciando escáner en MODO SIMULADOR...")
+        adaptador_inicial = AdaptadorSimulador()
+        ventana_principal._adaptador_simulador = adaptador_inicial
+    else:
+        print(f"[!] Iniciando escáner en MODO REAL conectando a {puertos_detectados[0]}...")
+        adaptador_inicial = AdaptadorELM327()
 
+    # Instanciación única del hilo trabajador OBD-II (Capa 2)
+    trabajador_obd = TrabajadorOBD(adaptador=adaptador_inicial)
 
-    # Crear un adaptador independiente para el botón de simulación ***************
-    adaptador_simulador = AdaptadorSimulador()
-    # Desactivar los fallos programados para permitir conectar desde el primer intento
-    adaptador_simulador.modo_secuencia_fallos = False
-    # Crear el trabajador encargado exclusivamente del simulador
-    trabajador_simulador = TrabajadorOBD(adaptador=adaptador_simulador)
-    # ***************
-
-    # Inyectar la referencia del trabajador OBD en la ventana principal para ejecutar acciones de control
+    # Enlace de señales Qt entre TrabajadorOBD (Capa 2) y VentanaPrincipal (Capa 1)
     ventana_principal.set_trabajador_obd(trabajador_obd)
-
-    # Registrar el trabajador del simulador en la interfaz ************
-    ventana_principal.set_trabajador_simulador(trabajador_simulador) # ************
-
-    # Conectar la señal de transmisión de DTCs del hilo con el slot de recepción de la GUI
     trabajador_obd.datos_recibidos.connect(ventana_principal.recibir_dtcs_asincronos)
+    trabajador_obd.sensores_recibidos.connect(ventana_principal.recibir_sensores_asincronos)
 
-    # Conectar la señal de telemetría de sensores en tiempo real con el slot de la GUI
-    trabajador_obd.sensores_recibidos.connect(
-        ventana_principal.recibir_sensores_asincronos
-    )
+    # Arrancar el hilo secundario en estado de espera (sin sondear hasta pulsar Conectar)
+    trabajador_obd.start()
 
-    # Conectar la señal de errores del hilo con la barra de estado visual (LED) de la GUI
-    trabajador_obd.error_ocurrido.connect(
-        lambda mensaje_error: ventana_principal.barra_estado_widget.actualizar_estado(
-            conectado=False, mensaje=mensaje_error
-        )
-    )
-
-    # Arrancar la ejecución en segundo plano del hilo asíncrono de sondeo
-    trabajador_obd.start() 
-
-    # Iniciar el hilo del simulador en segundo plano **********
-    trabajador_simulador.start() # deja preparado el trabajador para recibir la orden del botón. ***
-
-    # Renderizar y mostrar en pantalla la ventana principal
+    # Mostrar interfaz gráfica y ejecutar bucle principal
     ventana_principal.show()
+    codigo_salida: int = app.exec()
 
-    # Garantizar la detención limpia del hilo secundario al cerrar la ventana principal
-    app.aboutToQuit.connect(trabajador_obd.detener)
-
-    # Detener también el trabajador del simulador al cerrar la aplicación **********
-    app.aboutToQuit.connect(trabajador_simulador.detener) # *********
-
-    # Iniciar el bucle de eventos principal de Qt
-    sys.exit(app.exec())
+    # Cierre seguro y ordenado del hilo secundario y del puerto serial antes de salir
+    trabajador_obd.detener()
+    sys.exit(codigo_salida)
 
 
 if __name__ == "__main__":
