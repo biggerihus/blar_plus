@@ -4,7 +4,8 @@ Módulo de la Ventana Principal del Sistema Blar Plus.
 Centraliza el flujo de la aplicación ordenando las pantallas de Conductor y Mecánico,
 administrando el estado de la conexión e integrando los módulos gráficos y ventanas emergentes.
 Incluye estilos oscuros unificados y reactivos para todos los selectores desplegables,
-así como recepción asíncrona de confirmaciones de borrado (Servicio 04) desde Capa 2.
+bloqueo preventivo del botón de conexión durante el handshake y recepción asíncrona
+de confirmaciones de borrado (Servicio 04) desde Capa 2.
 
 Autor: Estrada Loaiza Rogelio y Erick Polanco Romero
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -12,10 +13,14 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 
 # Importación del módulo sys para gestión de argumentos de ejecución
 import sys
+# Importación de warnings para suprimir avisos benignos de desconexión de señales Qt
+import warnings
 # Importación de tipado estricto
 from typing import List, Optional
 # Importación de alineación, temporizador y orientaciones de Qt
 from PySide6.QtCore import Qt, QTimer
+# Importación para el cierre seguro de hilos al cerrar la ventana
+from PySide6.QtGui import QCloseEvent
 # Importación de widgets principales de PySide6 (incluyendo QListView para forzar delegado de QSS)
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,12 +46,12 @@ from abstraccion_de_hardware.adaptador_simulador import AdaptadorSimulador
 
 # Importación de la barra de estado con indicador LED
 from interfaz_grafica.barra_estado import BarraEstadoWidget
+# Importación del cuadro modal de confirmación
+from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
 # Importación del gráfico dinámico pyqtgraph
 from interfaz_grafica.grafico_tiempo_real import GraficoTiempoRealWidget
 # Importación del widget de tabla DTC
 from interfaz_grafica.lista_dtc import ListaDTCWidget
-# Importación del cuadro modal de confirmación
-from interfaz_grafica.dialogo_confirmacion import DialogoConfirmacion
 # Importación del controlador y DTO
 from nucleo_y_controladores.controlador_reporte import ControladorReporte, DTCDTO
 # Importación de la clase TrabajadorOBD para anotación de tipos
@@ -199,12 +204,27 @@ class VentanaPrincipal(QMainWindow):
         self._restaurar_boton_refrescar()
         self.btn_refrescar_puertos.clicked.connect(self.refrescar_puertos_con_efecto)
 
-        # Botón de Conexión/Desconexión
-        btn_conectar = QPushButton("Conectar / Desconectar Equipo")
-        btn_conectar.setStyleSheet(
-            "color: black; font-weight: bold; background-color: #f0f0f0; border: 1px solid #ccc; padding: 6px 12px; border-radius: 4px;"
-        )
-        btn_conectar.clicked.connect(self.alternar_conexion)
+        # Botón de Conexión/Desconexión con estado visual bloqueado durante la negociación
+        self.btn_conectar = QPushButton("Conectar / Desconectar Equipo")
+        self.btn_conectar.setStyleSheet("""
+            QPushButton {
+                color: black;
+                font-weight: bold;
+                background-color: #f0f0f0;
+                border: 1px solid #ccc;
+                padding: 6px 12px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:disabled {
+                background-color: #3a3a3a;
+                color: #888888;
+                border: 1px solid #555555;
+            }
+        """)
+        self.btn_conectar.clicked.connect(self.alternar_conexion)
 
         # Agregar elementos al layout superior
         layout_superior.addWidget(self.lbl_estado_texto)
@@ -212,7 +232,7 @@ class VentanaPrincipal(QMainWindow):
         layout_superior.addWidget(lbl_puerto)
         layout_superior.addWidget(self.combo_puerto_modo)
         layout_superior.addWidget(self.btn_refrescar_puertos)
-        layout_superior.addWidget(btn_conectar)
+        layout_superior.addWidget(self.btn_conectar)
         layout_principal.addLayout(layout_superior)
 
         # Carga inicial de la lista de puertos en el menú desplegable
@@ -386,6 +406,11 @@ class VentanaPrincipal(QMainWindow):
             f"Verifique que el escáner esté bien conectado al puerto del vehículo y el encendido activo."
         )
 
+        # Garantizar que el botón de conexión quede habilitado tras cerrar el mensaje de error
+        if hasattr(self, "btn_conectar"):
+            self.btn_conectar.setText("Conectar / Desconectar Equipo")
+            self.btn_conectar.setEnabled(True)
+
     # Método para construir la pantalla del conductor (Vista Simple)
     def crear_vista_conductor(self) -> QWidget:
         """Construye el panel de usuario orientado al conductor (marcadores y tarjetas de salud)."""
@@ -544,37 +569,53 @@ class VentanaPrincipal(QMainWindow):
     def alternar_conexion(self) -> None:
         """Alterna el estado de conexión e invoca el inicio/pausa del sondeo de hardware."""
         if not self.estadoConexion:
-            # Obtención del identificador de puerto/hardware seleccionado
-            valor_seleccionado = self.combo_puerto_modo.currentData()
-
-            # Instanciación persistente para permitir que los intentos se acumulen correctamente
-            if valor_seleccionado == "SIMULADOR":
-                if self._adaptador_simulador is None:
-                    self._adaptador_simulador = AdaptadorSimulador()
-                nuevo_adaptador = self._adaptador_simulador
-                puerto_target = None
-            else:
-                nuevo_adaptador = AdaptadorELM327()
-                puerto_target = valor_seleccionado
-
-            if self.trabajador_obd:
-                # Reasignación del adaptador seleccionado al hilo de sondeo asíncrono
-                self.trabajador_obd.adaptador = nuevo_adaptador
-                exito_conexion = self.trabajador_obd.iniciar_sondeo(puerto=puerto_target)
-                if not exito_conexion:
-                    return
-
-            self.estadoConexion = True
-            self.lbl_estado_texto.setText("Estado de Conexión: Conectado")
-            self.lbl_estado_texto.setStyleSheet("color: #5cb85c; font-weight: bold;")
-
-            desc_conexion = f"Conectado ({valor_seleccionado})" if valor_seleccionado != "SIMULADOR" else "Conectado (Simulador)"
-            self.barra_estado_widget.actualizar_estado(True, f"{desc_conexion} a la ECU correctamente.")
-            self.lbl_resumen.setText("Resumen rápido: Sistema sincronizado y estable.")
-
-            # Bloquear la modificación del selector de puertos y botón de escaneo durante la sesión activa
+            # Bloquear botón y controles de puerto antes de iniciar la negociación serial
+            self.btn_conectar.setEnabled(False)
+            self.btn_conectar.setText("⏳ Conectando...")
             self.combo_puerto_modo.setEnabled(False)
             self.btn_refrescar_puertos.setEnabled(False)
+            self.lbl_estado_texto.setText("Estado de Conexión: Conectando...")
+            self.lbl_estado_texto.setStyleSheet("color: #f0ad4e; font-weight: bold;")
+            self.barra_estado_widget.actualizar_estado(False, "Estableciendo enlace con el hardware OBD-II...")
+            QApplication.processEvents()
+
+            try:
+                # Obtención del identificador de puerto/hardware seleccionado
+                valor_seleccionado = self.combo_puerto_modo.currentData()
+
+                # Instanciación persistente para permitir que los intentos se acumulen correctamente
+                if valor_seleccionado == "SIMULADOR":
+                    if self._adaptador_simulador is None:
+                        self._adaptador_simulador = AdaptadorSimulador()
+                    nuevo_adaptador = self._adaptador_simulador
+                    puerto_target = None
+                else:
+                    nuevo_adaptador = AdaptadorELM327()
+                    puerto_target = valor_seleccionado
+
+                if self.trabajador_obd:
+                    # Reasignación del adaptador seleccionado al hilo de sondeo asíncrono
+                    self.trabajador_obd.adaptador = nuevo_adaptador
+                    exito_conexion = self.trabajador_obd.iniciar_sondeo(puerto=puerto_target)
+                    if not exito_conexion:
+                        if "Conectando" in self.lbl_estado_texto.text():
+                            self.lbl_estado_texto.setText("Estado de Conexión: Desconectado")
+                            self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
+                        self.combo_puerto_modo.setEnabled(True)
+                        self.btn_refrescar_puertos.setEnabled(True)
+                        return
+
+                self.estadoConexion = True
+                self.lbl_estado_texto.setText("Estado de Conexión: Conectado")
+                self.lbl_estado_texto.setStyleSheet("color: #5cb85c; font-weight: bold;")
+
+                desc_conexion = f"Conectado ({valor_seleccionado})" if valor_seleccionado != "SIMULADOR" else "Conectado (Simulador)"
+                self.barra_estado_widget.actualizar_estado(True, f"{desc_conexion} a la ECU correctamente.")
+                self.lbl_resumen.setText("Resumen rápido: Sistema sincronizado y estable.")
+            finally:
+                # Rehabilitar el botón de conexión tras completar el enlace o cerrar el diálogo de error
+                self.btn_conectar.setText("Conectar / Desconectar Equipo")
+                self.btn_conectar.setEnabled(True)
 
         else:
             # Rutina de Desconexión controlada
@@ -718,12 +759,12 @@ class VentanaPrincipal(QMainWindow):
         self, exito_borrado: bool, codigos_borrados: list
     ) -> None:
         """
-        Procesa en el hilo principal (GUI) la confirmación o rechazo del Servicio 04
-        emitida por `TrabajadorOBD` tras comunicarse con el adaptador.
+        Procesa la respuesta asíncrona del borrado de códigos (Servicio 04)
+        emitida por `TrabajadorOBD` y actualiza las vistas y la barra de estado.
 
         Args:
-            exito_borrado (bool): True si la ECU confirmó el borrado; False si lo rechazó.
-            codigos_borrados (list): Lista de códigos específicos solicitados o lista vacía si fue global.
+            exito_borrado (bool): True si la ECU confirmó el borrado; False en caso de fallo.
+            codigos_borrados (list): Lista de códigos solicitados o vacía si se limpió toda la memoria.
         """
         if hasattr(self, "btn_borrar_dtc"):
             self.btn_borrar_dtc.setEnabled(True)
@@ -731,35 +772,67 @@ class VentanaPrincipal(QMainWindow):
         if not self.estadoConexion:
             return
 
-        if not exito_borrado:
+        if exito_borrado:
+            if codigos_borrados:
+                codigos_set = set(codigos_borrados)
+                self.reportes_actuales = [
+                    dto for dto in self.reportes_actuales if dto.codigo not in codigos_set
+                ]
+            else:
+                self.reportes_actuales = []
+
+            self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
+            self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
             self.barra_estado_widget.actualizar_estado(
-                True, "La ECU rechazó el borrado de códigos DTC."
+                True, "Códigos DTC borrados exitosamente de la ECU."
+            )
+            QMessageBox.information(
+                self,
+                "Borrado Exitoso",
+                "Los códigos de diagnóstico (DTC) fueron borrados correctamente de la computadora del vehículo."
+            )
+        else:
+            self.barra_estado_widget.actualizar_estado(
+                True, "No se pudo completar el borrado de códigos DTC."
             )
             QMessageBox.warning(
                 self,
                 "Borrado Rechazado por la ECU",
-                "La computadora del vehículo no aceptó la solicitud de borrado (Servicio 04).\n\n"
-                "Verifique que el motor esté apagado con el switch en posición ON (KOEO) "
-                "e inténtelo nuevamente."
+                "La ECU rechazó o no respondió a la orden de borrado (Servicio 04).\n"
+                "Verifique que el interruptor esté en posición ON y el motor apagado."
             )
-            return
 
-        # Actualización de la vista local tras confirmación positiva de la ECU
-        if codigos_borrados:
-            self.reportes_actuales = [
-                dto for dto in self.reportes_actuales if dto.codigo not in codigos_borrados
-            ]
-            mensaje = f"Se borraron {len(codigos_borrados)} código(s) seleccionado(s)."
-        else:
-            self.reportes_actuales = []
-            mensaje = "Todos los códigos DTC fueron borrados de la memoria con éxito."
+    # Evento de cierre seguro de la ventana principal
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """
+        Intercepta el cierre de la ventana para bloquear el procesamiento de tramas
+        entrantes, desconectar las señales asíncronas y detener `TrabajadorOBD`
+        antes de destruir los widgets de la interfaz.
+        """
+        self.estadoConexion = False
 
-        self.barra_estado_widget.actualizar_estado(True, mensaje)
-        self.lista_dtc_widget.cargar_reportes(self.reportes_actuales)
-        self.actualizar_vista_conductor_dtcs(self.reportes_actuales)
+        if self.trabajador_obd is not None:
+            pares_senal_slot = (
+                (self.trabajador_obd.datos_recibidos, self.recibir_dtcs_asincronos),
+                (self.trabajador_obd.sensores_recibidos, self.recibir_sensores_asincronos),
+                (self.trabajador_obd.info_vehiculo_recibida, self.actualizar_info_vehiculo),
+                (self.trabajador_obd.error_ocurrido, self.recibir_error_asincrono),
+                (self.trabajador_obd.borrado_completado, self.recibir_resultado_borrado_asincrono),
+            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                for senal, slot in pares_senal_slot:
+                    try:
+                        senal.disconnect(slot)
+                    except (RuntimeError, TypeError):
+                        pass
+
+            self.trabajador_obd.detener()
+
+        event.accept()
+        super().closeEvent(event)
 
 
-# Punto de entrada directo de la GUI si se ejecuta este script por separado
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     ventana = VentanaPrincipal()

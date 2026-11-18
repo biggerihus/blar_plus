@@ -188,10 +188,13 @@ def test_simulador_borrado_dtc_rechazo_cancelar_y_confirmar(qtbot: QtBot) -> Non
 
         # Caso C: Usuario confirma en DialogoConfirmacion -> Hilo OBD borra simulador y GUI
         with patch.object(DialogoConfirmacion, "exec", return_value=QDialog.DialogCode.Accepted):
-            ventana.abrir_dialogo_borrado()
-            qtbot.waitUntil(lambda: len(ventana.reportes_actuales) == 0, timeout=3000)
-            assert simulador.leer_dtc() == []
-            assert ventana.lista_dtc_widget.tabla.rowCount() == 0
+            with patch.object(QMessageBox, "information") as mock_info:
+                ventana.abrir_dialogo_borrado()
+                qtbot.waitUntil(lambda: len(ventana.reportes_actuales) == 0, timeout=3000)
+                mock_info.assert_called_once()
+                assert "Borrado Exitoso" in mock_info.call_args[0][1]
+                assert simulador.leer_dtc() == []
+                assert ventana.lista_dtc_widget.tabla.rowCount() == 0
     finally:
         trabajador.detener()
         qtbot.waitUntil(lambda: not trabajador.isRunning(), timeout=2000)
