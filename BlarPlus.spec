@@ -1,43 +1,33 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+# Selección automática del formato de icono según el sistema operativo donde se compila
+if sys.platform == "win32" and os.path.exists("recursos/icono.ico"):
+    icono_ejecutable = ["recursos/icono.ico"]
+elif sys.platform == "darwin" and os.path.exists("recursos/icono.icns"):
+    icono_ejecutable = ["recursos/icono.icns"]
+else:
+    icono_ejecutable = ["recursos/icono.png"]
 
-block_cipher = None
-
-# Recolección explícita de la base de datos SQLite y recursos de pyqtgraph
-datas = [
-    ('capa_de_datos/dtc_database.db', 'capa_de_datos'),
-    ('recursos/icono.png', 'recursos'),
-] + collect_data_files('pyqtgraph')
-
-hiddenimports = [
-    'PySide6.QtCore',
-    'PySide6.QtGui',
-    'PySide6.QtWidgets',
-    'pyqtgraph',
-    'serial',
-    'serial.tools.list_ports',
-    'sqlite3',
-    'requests',
-] + collect_submodules('pyqtgraph')
 
 a = Analysis(
     ['main.py'],
-    pathex=['.'],
+    pathex=[],
     binaries=[],
-    datas=datas,
-    hiddenimports=hiddenimports,
+    datas=[
+        ('capa_de_datos/catalogo_dtc.json', 'capa_de_datos'),
+        ('recursos', 'recursos'),
+    ],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tkinter', 'unittest'],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
+    excludes=[],
     noarchive=False,
+    optimize=0,
 )
-
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+pyz = PYZ(a.pure)
 
 exe = EXE(
     pyz,
@@ -49,22 +39,29 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,  # En False no abre ventana de consola al iniciar la GUI
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=icono_ejecutable,
 )
-
 coll = COLLECT(
     exe,
     a.binaries,
-    a.zipfiles,
     a.datas,
     strip=False,
     upx=True,
     upx_exclude=[],
     name='BlarPlus',
 )
+
+# Empaquetado nativo adicional para macOS (Unix)
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name='BlarPlus.app',
+        icon=icono_ejecutable[0],
+        bundle_identifier='mx.edu.uacm.blar.blarplus',
+    )

@@ -1,14 +1,19 @@
 # Entorno Virtual
 venv/
+.venv/
 env/
 ENV/
-*.venv
 
-# Caché de Python y compilados
+# Caché de Python, pruebas y compilados
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
+
+# Artefactos de compilación (PyInstaller)
+build/
+dist/
 
 # Archivos de configuración de IDEs y Editores
 .vscode/
@@ -21,7 +26,4 @@ __pycache__/
 # Archivos de registros y temporales
 *.log
 .DS_Store
-dist/
-build/
-*.pyc
-__pycache__/
+Thumbs.db

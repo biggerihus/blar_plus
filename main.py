@@ -12,11 +12,11 @@ Capa: Orquestación / Punto de Entrada
 
 # Importación del módulo sys para gestión de argumentos CLI y código de salida
 import sys
-# Importación de QApplication para el bucle principal de eventos gráficos Qt6
-from PySide6.QtWidgets import QApplication
-
 from pathlib import Path
+
+# Importación de QApplication y QIcon para el bucle principal de eventos gráficos Qt6
 from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 
 # Importación de los adaptadores concretos de Capa 4 (HAL)
 from abstraccion_de_hardware.adaptador_elm327 import AdaptadorELM327
@@ -29,11 +29,16 @@ from nucleo_y_controladores.trabajador_obd import TrabajadorOBD
 
 def main() -> None:
     """Inicializa la interfaz gráfica, configura el hilo OBD-II y ejecuta la aplicación."""
-    app = QApplication(sys.argv)
+    # Identificador explícito para que Windows muestre el icono propio en la barra de tareas
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("mx.edu.uacm.blar.blarplus.1")
 
     # Configuración de identidad e icono de la aplicación ********************************
-    app.setApplicationName("BlarPlus")
-    app.setDesktopFileName("blarplus")
+    QApplication.setApplicationName("BlarPlus")
+    QApplication.setDesktopFileName("blarplus")
+
+    app = QApplication(sys.argv)
 
     # Detectar la ubicación de recursos en desarrollo o aplicación compilada
     if getattr(sys, "frozen", False):
