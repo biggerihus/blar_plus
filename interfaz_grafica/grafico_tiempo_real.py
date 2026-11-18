@@ -3,7 +3,8 @@ Módulo de Gráficos Técnicos en Tiempo Real para Blar Plus.
 
 Proporciona un widget especializado basado en pyqtgraph para renderizar datos
 continuos de sensores vehiculares a alta frecuencia, manteniendo una gestión de memoria
-eficiente mediante el uso de un buffer circular, auto-escalado dinámico y selección multisensores.
+eficiente mediante el uso de un buffer circular, auto-escalado dinámico continuo
+con bloqueo de zoom/scroll interactivo y selección multisensores.
 
 Autor: Estrada Loaiza Rogelio
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -11,8 +12,8 @@ Capa: Interfaz Gráfica (GUI) / Capa 1
 
 # Importación de deque para la implementación de buffers circulares con tamaño máximo
 from collections import deque
-# Importación de Dict, List, Optional y Tuple para anotaciones de tipo estrictas
-from typing import Dict, List, Optional, Tuple, Union
+# Importación de Dict, Optional, Tuple y Union para anotaciones de tipo estrictas
+from typing import Dict, Optional, Tuple, Union
 # Importación de componentes de layout, selector, lista y etiquetas de PySide6
 from PySide6.QtWidgets import (
     QWidget,
@@ -22,8 +23,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QListView,
 )
-# Importación de QColor para la definición de colores de alta visibilidad
-from PySide6.QtGui import QColor
 # Importación de la librería pyqtgraph especializada en graficado de alto rendimiento
 import pyqtgraph as pg
 
@@ -37,7 +36,8 @@ pg.setConfigOption("useOpenGL", False)
 class GraficoTiempoRealWidget(QWidget):
     """
     Widget de gráfico en tiempo real configurado con buffer circular de 100 muestras,
-    selector de sensores interactivo y cálculo dinámico de Mínimo / Máximo / Actual.
+    selector de sensores interactivo, auto-escalado fijo sin desplazamiento accidental
+    por zoom/scroll y cálculo dinámico de Mínimo / Máximo / Actual.
 
     Atributos:
         plot_widget (pg.PlotWidget): Lienzo principal de renderizado de pyqtgraph.
@@ -106,8 +106,8 @@ class GraficoTiempoRealWidget(QWidget):
 
         # Selector desplegable QComboBox para alternar el sensor mostrado en la gráfica
         self.combo_sensor = QComboBox()
-        
-        # Aplicación del mismo CSS idéntico para garantizar coincidencia visual exacta
+
+        # Aplicación del CSS unificado para garantizar coincidencia visual exacta
         self.combo_sensor.setStyleSheet("""
             QComboBox {
                 background-color: #1E1E1E;
@@ -201,8 +201,13 @@ class GraficoTiempoRealWidget(QWidget):
         # Habilitación de cuadrícula visible en ejes X e Y con opacidad controlada
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
 
-        # Configuración de auto-escalado automático del eje Y para evitar que la gráfica quede plana
-        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+        # Bloquear zoom con rueda del ratón, arrastre y menú contextual para mantener la curva siempre centrada
+        self.plot_widget.setMouseEnabled(x=False, y=False)
+        self.plot_widget.setMenuEnabled(False)
+        self.plot_widget.hideButtons()
+
+        # Configuración de auto-escalado automático continuo en ambos ejes
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
 
         # Estilización de las etiquetas textuales del eje vertical (Y) e inferior (X)
         self.plot_widget.setLabel("left", "Valor del Sensor", color="#FFFFFF", size="10pt")
@@ -244,8 +249,8 @@ class GraficoTiempoRealWidget(QWidget):
         self.curva_activa.setPen(pen)
         self.curva_activa.setSymbolBrush(color_rgb)
 
-        # Forzar auto-escalado dinámico del Eje Y al cambiar de parámetro
-        self.plot_widget.enableAutoRange(axis=pg.ViewBox.YAxis)
+        # Forzar auto-escalado dinámico en ambos ejes al cambiar de parámetro
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
 
         # Re-renderizar los datos almacenados en el buffer del nuevo sensor activo
         if self.sensor_activo_clave in self.sensores_data:
@@ -255,6 +260,8 @@ class GraficoTiempoRealWidget(QWidget):
                 ultimo_val = buf_y[-1]
                 self._actualizar_titulo_grafico(str(config["nombre"]), ultimo_val, str(config["unidad"]))
                 self._actualizar_etiqueta_estadisticas(self.sensor_activo_clave, ultimo_val)
+        else:
+            self.curva_activa.setData([], [])
 
     # Método para actualizar el título superior de la gráfica
     def _actualizar_titulo_grafico(self, nombre: str, valor: float, unidad: str) -> None:
@@ -294,18 +301,19 @@ class GraficoTiempoRealWidget(QWidget):
         Slot receptor principal para actualizar los buffers del gráfico en tiempo real.
         """
         if isinstance(datos_o_nombre, dict):
+            indice_muestra = self.contador_x
             for clave_sensor, val_num in datos_o_nombre.items():
-                self.actualizar_sensor(clave_sensor, float(val_num))
+                self._insertar_muestra_sensor(clave_sensor, float(val_num), indice_muestra)
+            if datos_o_nombre:
+                self.contador_x += 1
         elif isinstance(datos_o_nombre, str) and valor is not None:
             self.actualizar_sensor(datos_o_nombre, float(valor))
         elif isinstance(datos_o_nombre, (float, int)):
             self.actualizar_sensor(self.sensor_activo_clave, float(datos_o_nombre))
 
-    # Método para agregar una lectura al buffer circular del sensor indicado
-    def actualizar_sensor(self, nombre_sensor: str, valor: float) -> None:
-        """
-        Agrega una nueva lectura al buffer circular del sensor y redibuja si es el sensor activo.
-        """
+    # Método interno para insertar una muestra con índice temporal explícito
+    def _insertar_muestra_sensor(self, nombre_sensor: str, valor: float, indice_x: int) -> None:
+        """Almacena la lectura en el buffer circular del sensor y actualiza la curva si está activo."""
         clave = nombre_sensor.lower()
 
         if clave not in self.sensores_data:
@@ -314,17 +322,22 @@ class GraficoTiempoRealWidget(QWidget):
             self.sensores_data[clave] = (buf_x, buf_y)
 
         buf_x, buf_y = self.sensores_data[clave]
-
-        buf_x.append(self.contador_x)
+        buf_x.append(indice_x)
         buf_y.append(float(valor))
-
-        self.contador_x += 1
 
         if clave == self.sensor_activo_clave:
             self.curva_activa.setData(list(buf_x), list(buf_y))
             config = self.config_sensores.get(clave, {"nombre": clave, "unidad": ""})
             self._actualizar_titulo_grafico(str(config["nombre"]), valor, str(config["unidad"]))
             self._actualizar_etiqueta_estadisticas(clave, valor)
+
+    # Método para agregar una lectura al buffer circular del sensor indicado
+    def actualizar_sensor(self, nombre_sensor: str, valor: float) -> None:
+        """
+        Agrega una nueva lectura al buffer circular del sensor y redibuja si es el sensor activo.
+        """
+        self._insertar_muestra_sensor(nombre_sensor, float(valor), self.contador_x)
+        self.contador_x += 1
 
     # Método alias de compatibilidad
     def agregar_dato(self, valor: float) -> None:
@@ -341,4 +354,5 @@ class GraficoTiempoRealWidget(QWidget):
         self.estadisticas_sensores.clear()
         self.contador_x = 0
         self.curva_activa.setData([], [])
+        self.plot_widget.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
         self.lbl_estadisticas.setText("Actual: -- | Mín: -- | Máx: --")

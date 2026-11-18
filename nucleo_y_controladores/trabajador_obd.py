@@ -124,11 +124,16 @@ class TrabajadorOBD(QThread):
                     if puerto
                     else self.adaptador.conectar()
                 )
+                if not self._ejecutando:
+                    return False
                 if resultado is False:
                     self.error_ocurrido.emit(
                         "No se pudo detectar el adaptador OBD-II. Verifique el puerto y las conexiones físicas."
                     )
                     return False
+
+            if not self._ejecutando:
+                return False
 
             with self._lock_borrado:
                 self._borrado_pendiente = False
@@ -154,7 +159,8 @@ class TrabajadorOBD(QThread):
             return True
 
         except Exception as e:
-            self.error_ocurrido.emit(f"Fallo al conectar con el hardware: {str(e)}")
+            if self._ejecutando:
+                self.error_ocurrido.emit(f"Fallo al conectar con el hardware: {str(e)}")
             return False
 
     def _procesar_conexion_pendiente(self) -> None:
@@ -310,9 +316,12 @@ class TrabajadorOBD(QThread):
             return False
 
     def detener(self) -> None:
-        """Finaliza la ejecución del bucle secundario y espera su cierre completo."""
+        """Finaliza la ejecución del bucle secundario y espera su cierre completo sin abortar."""
         self._ejecutando = False
         self._evento_conexion.set()
         self.pausar_sondeo()
-        self.quit()
-        self.wait(2000)
+        if self.isRunning():
+            self.quit()
+            if not self.wait(5000):
+                self.terminate()
+                self.wait(1000)

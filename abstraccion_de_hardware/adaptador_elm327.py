@@ -11,6 +11,7 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
+import select
 import threading
 import time
 from typing import Callable, Dict, Optional
@@ -29,9 +30,10 @@ from abstraccion_de_hardware.estrategias_protocolo import EstrategiasProtocolo
 class AdaptadorELM327(IAdaptadorOBD):
     """
     Comunicación OBD-II real mediante comandos AT y modos SAE J1979.
-    Incluye protecciones de tiempo de espera, autodetección de baudrate,
-    activación de líneas DTR/RTS para USB-CDC, liberación inmediata del descriptor
-    del kernel Linux y caché de sensores no soportados.
+    En Linux/POSIX utiliza E/S directa no bloqueante (os.open + select) para
+    evitar bloqueos de control en interfaces USB-CDC (/dev/ttyACM*), purga bytes
+    residuales iniciales, realiza barrido completo de protocolos (CAN, KWP2000,
+    ISO 9141-2) y almacena en caché los sensores no soportados por la ECU.
     """
 
     # Mapa de decodificadores soportados para los 10 sensores del sistema
@@ -48,8 +50,12 @@ class AdaptadorELM327(IAdaptadorOBD):
         "010B": EstrategiasProtocolo.decodificar_presion_map,
     }
 
-    def __init__(self, timeout: float = 1.0) -> None:
+    def __init__(self, timeout: float = 1.5) -> None:
         self.timeout = timeout
+        # Descriptor POSIX directo para Linux/macOS (evita bloqueos de tcsetattr en cdc_acm)
+        self._fd: Optional[int] = None
+        self._puerto_activo: str = "/dev/ttyACM0"
+        # Respaldo pyserial para Windows
         self._serial: Optional[serial.Serial] = None
         self._io_lock = threading.Lock()
         # Conjunto de PIDs que la ECU del vehículo actual declaró como no disponibles
@@ -81,6 +87,115 @@ class AdaptadorELM327(IAdaptadorOBD):
             puertos_validos.append(dev)
         return puertos_validos
 
+    def _esta_abierto(self) -> bool:
+        """Indica si existe un canal de comunicación activo (POSIX fd o pyserial)."""
+        if self._fd is not None:
+            return True
+        return self._serial is not None and self._serial.is_open
+
+    def _vaciar_entrada_posix(self, fd: int) -> None:
+        """Descarta bytes residuales en el descriptor POSIX sin bloquear."""
+        while True:
+            try:
+                listos, _, _ = select.select([fd], [], [], 0.01)
+                if not listos:
+                    break
+                datos = os.read(fd, 256)
+                if not datos:
+                    break
+            except (BlockingIOError, InterruptedError):
+                break
+            except OSError:
+                break
+
+    def _escribir_posix(self, fd: int, payload: bytes, timeout_escritura: float = 1.5) -> None:
+        """Escribe todos los bytes en modo no bloqueante respetando el timeout."""
+        pendiente = payload
+        limite = time.monotonic() + timeout_escritura
+        while pendiente:
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                raise TimeoutError("Write timeout")
+            _, listos_w, _ = select.select([], [fd], [], restante)
+            if not listos_w:
+                raise TimeoutError("Write timeout")
+            try:
+                escritos = os.write(fd, pendiente)
+                if escritos <= 0:
+                    raise OSError("El puerto serial no aceptó datos.")
+                pendiente = pendiente[escritos:]
+            except (BlockingIOError, InterruptedError):
+                continue
+
+    def _leer_hasta_prompt_posix(self, fd: int, timeout_lectura: float) -> bytes:
+        """Lee fragmentos desde el descriptor POSIX hasta recibir '>' o agotar el tiempo."""
+        acumulado = bytearray()
+        limite = time.monotonic() + timeout_lectura
+        while True:
+            restante = limite - time.monotonic()
+            if restante <= 0:
+                break
+            listos_r, _, _ = select.select([fd], [], [], restante)
+            if not listos_r:
+                break
+            try:
+                trozo = os.read(fd, 256)
+                if not trozo:
+                    break
+                acumulado.extend(trozo)
+                if b">" in acumulado:
+                    break
+            except (BlockingIOError, InterruptedError):
+                continue
+        return bytes(acumulado)
+
+    def _abrir_canal_directo(self, puerto: str, baudrate: int) -> None:
+        """
+        Abre el dispositivo serial. En POSIX utiliza os.open directo con O_NONBLOCK
+        (omitiendo peticiones de control tcsetattr/DTR que bloquean chips USB-CDC).
+        """
+        self._puerto_activo = puerto
+        if os.name == "posix":
+            fd = os.open(puerto, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            # Solo ajustar velocidad en adaptadores FTDI/CH340 (/dev/ttyUSB*); en ttyACM se omite
+            if "USB" in puerto.upper() and termios is not None:
+                try:
+                    attrs = termios.tcgetattr(fd)
+                    vel_const = getattr(termios, f"B{baudrate}", termios.B38400)
+                    termios.cfsetispeed(attrs, vel_const)
+                    termios.cfsetospeed(attrs, vel_const)
+                    attrs[2] |= termios.CS8 | termios.CREAD | termios.CLOCAL
+                    attrs[3] &= ~(termios.ECHO | termios.ICANON | termios.ISIG)
+                    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+                except Exception:
+                    pass
+
+            with self._io_lock:
+                self._fd = fd
+
+            # Enviar CR inicial para limpiar cualquier byte nulo (\x00) pendiente en el chip
+            try:
+                self._escribir_posix(fd, b"\r", timeout_escritura=1.0)
+                time.sleep(0.15)
+                self._vaciar_entrada_posix(fd)
+            except Exception:
+                self.desconectar()
+                raise
+        else:
+            ser = serial.Serial(
+                port=puerto,
+                baudrate=baudrate,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                timeout=self.timeout,
+                write_timeout=1.5,
+            )
+            with self._io_lock:
+                self._serial = ser
+            time.sleep(0.15)
+            ser.reset_input_buffer()
+
     def _leer_voltaje_obd(self) -> Optional[float]:
         """Consulta el voltaje del conector OBD-II (pin 16) mediante ATRV."""
         try:
@@ -92,16 +207,62 @@ class AdaptadorELM327(IAdaptadorOBD):
             pass
         return None
 
+    def _negociar_protocolo_vehiculo(self, puerto: str, voltaje: Optional[float]) -> str:
+        """
+        Intenta enlazar con la ECU probando primero CAN 11-bit (ATSP6), luego
+        KWP2000 Fast Init (ATSP5) y finalmente el barrido automático completo (ATSP0)
+        con tiempo suficiente para inicialización lenta de 5 baudios (ISO 9141-2 / KWP).
+        """
+        # 1. Prueba rápida en CAN 11-bit 500 kbps (ATSP6)
+        try:
+            self._command("ATSP6", timeout_override=0.6)
+            return self._command("0100", timeout_override=1.5)
+        except (RuntimeError, LookupError):
+            pass
+
+        # 2. Prueba rápida en ISO 14230-4 KWP2000 Fast Init (ATSP5)
+        try:
+            self._registrar_log("CAN sin enlace; probando KWP2000 Fast Init (ATSP5)...")
+            self._command("ATSP5", timeout_override=0.6)
+            return self._command("0100", timeout_override=2.5)
+        except (RuntimeError, LookupError):
+            pass
+
+        # 3. Barrido automático completo de todos los protocolos OBD-II (incluye 5-baud init)
+        self._registrar_log("Iniciando barrido automático completo de protocolos (ATSP0)...")
+        self._command("ATSP0", timeout_override=0.6)
+        try:
+            return self._command("0100", timeout_override=12.0)
+        except LookupError:
+            self._registrar_log("ECU respondió NO DATA a 0100; verificando enlace con Servicio 03...")
+            try:
+                return self._command("03", timeout_override=3.0)
+            except LookupError:
+                return "NO DATA (ECU activa sin códigos)"
+        except RuntimeError as err_bus:
+            if voltaje is not None and voltaje < 5.0:
+                raise RuntimeError(
+                    f"Escáner detectado en {puerto}, pero sin alimentación del vehículo "
+                    f"(voltaje OBD-II: {voltaje:.1f} V). Conecte el cable al auto y ponga la llave en ON."
+                ) from err_bus
+            raise RuntimeError(
+                "El escáner respondió correctamente, pero la ECU del vehículo no contestó "
+                "a ningún protocolo estándar OBD-II (SAE J1979). Verifique la llave en ON."
+            ) from err_bus
+
     def conectar(self, puerto: str = "/dev/ttyUSB0", baudrate: int = 38400) -> bool:
         """
-        Establece conexión rápida con el ELM327 (priorizando 115200 baudios en ttyACM),
-        prueba primero bus CAN estándar (ATSP6) y recurre a detección automática (ATSP0).
+        Establece conexión con el ELM327 y negocia el protocolo OBD-II disponible
+        en el vehículo.
         """
         self.desconectar()
         self._pids_no_soportados.clear()
         self._registrar_log(f"=== Iniciando conexión en puerto {puerto} ===")
 
-        if "ACM" in puerto.upper():
+        if os.name == "posix" and "ACM" in puerto.upper():
+            # En interfaces USB-CDC el bus USB negocia la velocidad nativamente
+            velocidades_prueba = [115200]
+        elif "ACM" in puerto.upper():
             velocidades_prueba = [115200, 38400]
         else:
             velocidades_prueba = [baudrate]
@@ -114,36 +275,16 @@ class AdaptadorELM327(IAdaptadorOBD):
             chip_detectado = False
             puerto_bloqueado = False
             try:
-                self._registrar_log(f"Probando {puerto} a {vel} baudios...")
-                ser = serial.Serial(
-                    port=puerto,
-                    baudrate=vel,
-                    bytesize=serial.EIGHTBITS,
-                    parity=serial.PARITY_NONE,
-                    stopbits=serial.STOPBITS_ONE,
-                    timeout=self.timeout,
-                    write_timeout=0.4,
-                    rtscts=False,
-                    dsrdtr=False,
-                    xonxoff=False,
-                )
-                # Afirmar DTR/RTS explícitamente para despertar interfaces USB-CDC
-                try:
-                    ser.dtr = True
-                    ser.rts = True
-                except Exception:
-                    pass
+                self._registrar_log(f"Abriendo {puerto} ({vel} baudios)...")
+                self._abrir_canal_directo(puerto, vel)
 
-                with self._io_lock:
-                    self._serial = ser
-
-                time.sleep(0.2)
-                ser.reset_input_buffer()
-
-                # Reinicio del chip ELM327 (read_until('>') espera hasta que termina el arranque)
-                self._command("ATZ", timeout_override=1.5)
+                # Reinicio del chip ELM327
+                self._command("ATZ", timeout_override=1.8)
                 time.sleep(0.15)
-                ser.reset_input_buffer()
+                if self._fd is not None:
+                    self._vaciar_entrada_posix(self._fd)
+                elif self._serial is not None:
+                    self._serial.reset_input_buffer()
 
                 # Configuración base del formato de tramas
                 for command in ("ATE0", "ATL0", "ATS0", "ATH0"):
@@ -151,12 +292,11 @@ class AdaptadorELM327(IAdaptadorOBD):
                     if "?" in response:
                         raise RuntimeError(f"El ELM327 rechazó el comando {command}: {response}")
 
-                # El chip ya respondió a esta velocidad; no volver a probar otro baudrate
                 chip_detectado = True
 
-                # Activar temporización adaptativa agresiva para reducir tiempos muertos
+                # Temporización adaptativa estándar (compatibilidad con ECUs ISO/KWP y CAN)
                 try:
-                    self._command("ATAT2", timeout_override=0.5)
+                    self._command("ATAT1", timeout_override=0.5)
                 except Exception:
                     pass
 
@@ -164,26 +304,8 @@ class AdaptadorELM327(IAdaptadorOBD):
                 if voltaje is not None:
                     self._registrar_log(f"Voltaje leído en puerto OBD-II: {voltaje:.1f} V")
 
-                # 1. Prueba rápida en CAN 11-bit 500 kbps (ATSP6, estándar en autos >= 2008)
-                resp_bus = ""
-                try:
-                    self._command("ATSP6", timeout_override=0.5)
-                    resp_bus = self._command("0100", timeout_override=1.2)
-                except RuntimeError:
-                    # 2. Respaldo automático para protocolos legacy (ISO 9141, KWP2000, J1850)
-                    self._registrar_log("CAN rápido sin enlace; buscando protocolo automático (ATSP0)...")
-                    self._command("ATSP0", timeout_override=0.5)
-                    try:
-                        resp_bus = self._command("0100", timeout_override=3.5)
-                    except RuntimeError as err_bus:
-                        if voltaje is not None and voltaje < 5.0:
-                            raise RuntimeError(
-                                f"Escáner detectado en {puerto}, pero sin conexión al vehículo "
-                                f"(voltaje OBD-II: {voltaje:.1f} V). Conecte el cable al auto y ponga la llave en ON."
-                            ) from err_bus
-                        raise
-
-                self._registrar_log(f"Respuesta inicial ECU (0100): {resp_bus}")
+                resp_bus = self._negociar_protocolo_vehiculo(puerto, voltaje)
+                self._registrar_log(f"Respuesta inicial ECU: {resp_bus}")
 
                 try:
                     proto = self._command("ATDP", timeout_override=0.6)
@@ -198,7 +320,7 @@ class AdaptadorELM327(IAdaptadorOBD):
             except Exception as err:
                 self._registrar_log(f"Fallo a {vel} baudios: {err}")
                 ultimo_error = err
-                if "Write timeout" in str(err) or "puerto USB" in str(err):
+                if "Write timeout" in str(err) or "puerto" in str(err).lower():
                     puerto_bloqueado = True
                 self.desconectar()
                 if chip_detectado or puerto_bloqueado:
@@ -209,78 +331,102 @@ class AdaptadorELM327(IAdaptadorOBD):
         return False
 
     @staticmethod
-    def _cerrar_descriptor_seguro(ser: serial.Serial) -> None:
-        """Cierra el descriptor serial en segundo plano sin detener el flujo principal."""
+    def _cerrar_fd_en_segundo_plano(fd: int) -> None:
+        """Cierra el descriptor POSIX en segundo plano sin bloquear el hilo principal."""
         try:
-            if ser.is_open:
-                ser.close()
+            os.close(fd)
         except Exception:
             pass
 
     def desconectar(self) -> None:
-        """Descarta búferes del kernel Linux y libera el puerto serial de forma inmediata."""
+        """Libera el descriptor POSIX o el objeto pyserial sin bloquear la interfaz."""
+        fd = self._fd
+        self._fd = None
+        if fd is not None:
+            try:
+                if termios is not None:
+                    termios.tcflush(fd, termios.TCIOFLUSH)
+            except Exception:
+                pass
+            threading.Thread(
+                target=self._cerrar_fd_en_segundo_plano,
+                args=(fd,),
+                daemon=True,
+            ).start()
+            self._registrar_log("Descriptor serial POSIX liberado correctamente.")
+
         ser = self._serial
         self._serial = None
         if ser is not None:
             try:
-                if hasattr(ser, "cancel_read"):
-                    ser.cancel_read()
-                if hasattr(ser, "cancel_write"):
-                    ser.cancel_write()
                 if ser.is_open:
-                    # Vaciar cola de salida del kernel evita el closing_wait de 30 s en Linux
-                    try:
-                        fd = ser.fileno()
-                        if termios is not None:
-                            termios.tcflush(fd, termios.TCIOFLUSH)
-                        os.set_blocking(fd, False)
-                    except Exception:
-                        pass
-                    threading.Thread(
-                        target=self._cerrar_descriptor_seguro,
-                        args=(ser,),
-                        daemon=True,
-                    ).start()
+                    ser.close()
                 self._registrar_log("Puerto serial liberado correctamente.")
             except Exception as err:
                 self._registrar_log(f"Aviso al cerrar puerto serial: {err}")
 
     def _command(self, command: str, timeout_override: Optional[float] = None) -> str:
         """Envía un comando ASCII al ELM327 y valida la integridad de la respuesta."""
+        timeout_efectivo = timeout_override if timeout_override is not None else self.timeout
+        payload = (command.strip() + "\r").encode("ascii")
+
         with self._io_lock:
+            fd = self._fd
             ser = self._serial
-            if ser is None or not ser.is_open:
+            if fd is None and (ser is None or not ser.is_open):
                 raise RuntimeError("El adaptador ELM327 no está conectado.")
 
-            timeout_original = ser.timeout
+            puerto_actual = self._puerto_activo
             try:
-                if timeout_override is not None:
-                    ser.timeout = timeout_override
+                # Breve pausa para respetar el tiempo de guarda de protocolos ISO/KWP y USB-CDC
+                time.sleep(0.03)
 
-                ser.reset_input_buffer()
-                ser.write((command.strip() + "\r").encode("ascii"))
-                raw = ser.read_until(b">")
-            except serial.SerialTimeoutException as err:
+                if fd is not None:
+                    self._vaciar_entrada_posix(fd)
+                    self._escribir_posix(fd, payload, timeout_escritura=1.5)
+                    raw = self._leer_hasta_prompt_posix(fd, timeout_lectura=timeout_efectivo)
+
+                    # Si expiró sin recibir '>', enviar '\r' para abortar el barrido del ELM327
+                    if not raw.endswith(b">") and self._fd is not None:
+                        try:
+                            self._escribir_posix(fd, b"\r", timeout_escritura=0.5)
+                            raw += self._leer_hasta_prompt_posix(fd, timeout_lectura=0.5)
+                        except Exception:
+                            pass
+                else:
+                    assert ser is not None
+                    timeout_original = ser.timeout
+                    try:
+                        ser.timeout = timeout_efectivo
+                        ser.reset_input_buffer()
+                        ser.write(payload)
+                        raw = ser.read_until(b">")
+                        if not raw.endswith(b">") and ser.is_open:
+                            try:
+                                ser.write(b"\r")
+                                ser.timeout = 0.5
+                                raw += ser.read_until(b">")
+                            except Exception:
+                                pass
+                    finally:
+                        if ser.is_open:
+                            ser.timeout = timeout_original
+
+            except (TimeoutError, serial.SerialTimeoutException) as err:
                 self.desconectar()
                 raise RuntimeError(
-                    "El puerto USB del escáner no responde (Write timeout). "
-                    "Desconecte y vuelva a conectar el cable USB o verifique que otro servicio no lo esté ocupando."
+                    f"El puerto USB del escáner ({puerto_actual}) no responde (Write timeout). "
+                    "Desconecte el escáner del auto y de la laptop por 5 segundos para reiniciarlo."
                 ) from err
-            except serial.SerialException as err:
+            except (OSError, serial.SerialException) as err:
                 self.desconectar()
-                raise RuntimeError(f"Se perdió la comunicación USB con el escáner ELM327: {err}")
-            finally:
-                if timeout_override is not None and ser.is_open:
-                    try:
-                        ser.timeout = timeout_original
-                    except Exception:
-                        pass
+                raise RuntimeError(f"Se perdió la comunicación USB con el escáner ELM327: {err}") from err
 
         # Si el puerto fue cerrado mientras se leía, salir sin lanzar falso error de bus
-        if self._serial is None:
+        if not self._esta_abierto():
             raise RuntimeError("Conexión cerrada por el usuario.")
 
-        response = raw.decode("ascii", errors="ignore").replace(">", " ")
+        response = raw.decode("ascii", errors="ignore").replace("\x00", "").replace(">", " ")
         response = re.sub(r"[\r\n]", " ", response)
         # Eliminar mensajes informativos del ELM327 para no contaminar la decodificación hex
         response = re.sub(r"SEARCHING\.+", " ", response, flags=re.IGNORECASE)
@@ -319,7 +465,7 @@ class AdaptadorELM327(IAdaptadorOBD):
     def leer_dtc(self) -> list[str]:
         """Consulta los códigos de falla confirmados (Servicio 03)."""
         try:
-            response = self._command("03", timeout_override=2.0)
+            response = self._command("03", timeout_override=2.5)
             return EstrategiasProtocolo.decodificar_dtc_bytes(response)
         except LookupError:
             # Algunas ECUs responden NO DATA cuando no tienen códigos almacenados

@@ -4,8 +4,9 @@ Módulo de la Ventana Principal del Sistema Blar Plus.
 Centraliza el flujo de la aplicación ordenando las pantallas de Conductor y Mecánico,
 administrando el estado de la conexión e integrando los módulos gráficos y ventanas emergentes.
 Incluye estilos oscuros unificados y reactivos para todos los selectores desplegables,
-bloqueo preventivo del botón de conexión durante el handshake y recepción asíncrona
-de confirmaciones de borrado (Servicio 04) desde Capa 2.
+etiqueta y color dinámico en el botón de conexión ('Conectar' / 'Desconectar' en rojo)
+con bloqueo preventivo durante el handshake y recepción asíncrona de confirmaciones
+de borrado (Servicio 04).
 
 Autor: Estrada Loaiza Rogelio y Erick Polanco Romero
 Capa: Interfaz Gráfica (GUI) / Capa 1
@@ -184,6 +185,49 @@ class VentanaPrincipal(QMainWindow):
             }
         """
 
+        # Estilos QSS para el botón dinámico de conexión ('Conectar' vs 'Desconectar')
+        self._estilo_boton_conectar = """
+            QPushButton {
+                color: #000000;
+                font-weight: bold;
+                font-size: 13px;
+                background-color: #f0f0f0;
+                border: 1px solid #cccccc;
+                padding: 8px 24px;
+                border-radius: 6px;
+                min-width: 155px;
+            }
+            QPushButton:hover {
+                background-color: #e0e0e0;
+            }
+            QPushButton:disabled {
+                background-color: #3a3a3a;
+                color: #888888;
+                border: 1px solid #555555;
+            }
+        """
+
+        self._estilo_boton_desconectar = """
+            QPushButton {
+                color: #FFFFFF;
+                font-weight: bold;
+                font-size: 13px;
+                background-color: #d9534f;
+                border: 1px solid #b52b27;
+                padding: 8px 24px;
+                border-radius: 6px;
+                min-width: 155px;
+            }
+            QPushButton:hover {
+                background-color: #c9302c;
+            }
+            QPushButton:disabled {
+                background-color: #3a3a3a;
+                color: #888888;
+                border: 1px solid #555555;
+            }
+        """
+
         # ---------------- LAYOUT SUPERIOR (Controles de Conexión) ----------------
         layout_superior = QHBoxLayout()
         self.lbl_estado_texto = QLabel("Estado de Conexión: Desconectado")
@@ -204,26 +248,9 @@ class VentanaPrincipal(QMainWindow):
         self._restaurar_boton_refrescar()
         self.btn_refrescar_puertos.clicked.connect(self.refrescar_puertos_con_efecto)
 
-        # Botón de Conexión/Desconexión con estado visual bloqueado durante la negociación
-        self.btn_conectar = QPushButton("Conectar / Desconectar Equipo")
-        self.btn_conectar.setStyleSheet("""
-            QPushButton {
-                color: black;
-                font-weight: bold;
-                background-color: #f0f0f0;
-                border: 1px solid #ccc;
-                padding: 6px 12px;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:disabled {
-                background-color: #3a3a3a;
-                color: #888888;
-                border: 1px solid #555555;
-            }
-        """)
+        # Botón dinámico de Conexión ('Conectar' <-> 'Desconectar')
+        self.btn_conectar = QPushButton("Conectar")
+        self._actualizar_boton_conexion(conectado=False)
         self.btn_conectar.clicked.connect(self.alternar_conexion)
 
         # Agregar elementos al layout superior
@@ -271,6 +298,22 @@ class VentanaPrincipal(QMainWindow):
         # ---------------- BARRA DE ESTADO INFERIOR ----------------
         self.barra_estado_widget = BarraEstadoWidget()
         layout_principal.addWidget(self.barra_estado_widget)
+
+    # Método auxiliar para sincronizar texto, color y habilitación del botón de conexión
+    def _actualizar_boton_conexion(
+        self,
+        conectado: bool,
+        texto: Optional[str] = None,
+        habilitado: bool = True,
+    ) -> None:
+        """Actualiza la etiqueta, el estilo visual (rojo al estar conectado) y estado del botón."""
+        if not hasattr(self, "btn_conectar"):
+            return
+        etiqueta = texto if texto is not None else ("Desconectar" if conectado else "Conectar")
+        estilo = self._estilo_boton_desconectar if conectado else self._estilo_boton_conectar
+        self.btn_conectar.setText(etiqueta)
+        self.btn_conectar.setStyleSheet(estilo)
+        self.btn_conectar.setEnabled(habilitado)
 
     # Método para refrescar la lista de puertos aplicando una animación brillante al botón
     def refrescar_puertos_con_efecto(self) -> None:
@@ -406,10 +449,8 @@ class VentanaPrincipal(QMainWindow):
             f"Verifique que el escáner esté bien conectado al puerto del vehículo y el encendido activo."
         )
 
-        # Garantizar que el botón de conexión quede habilitado tras cerrar el mensaje de error
-        if hasattr(self, "btn_conectar"):
-            self.btn_conectar.setText("Conectar / Desconectar Equipo")
-            self.btn_conectar.setEnabled(True)
+        # Restaurar botón a estado inicial 'Conectar' tras cerrar el mensaje de error
+        self._actualizar_boton_conexion(conectado=False)
 
     # Método para construir la pantalla del conductor (Vista Simple)
     def crear_vista_conductor(self) -> QWidget:
@@ -570,8 +611,7 @@ class VentanaPrincipal(QMainWindow):
         """Alterna el estado de conexión e invoca el inicio/pausa del sondeo de hardware."""
         if not self.estadoConexion:
             # Bloquear botón y controles de puerto antes de iniciar la negociación serial
-            self.btn_conectar.setEnabled(False)
-            self.btn_conectar.setText("⏳ Conectando...")
+            self._actualizar_boton_conexion(conectado=False, texto="⏳ Conectando...", habilitado=False)
             self.combo_puerto_modo.setEnabled(False)
             self.btn_refrescar_puertos.setEnabled(False)
             self.lbl_estado_texto.setText("Estado de Conexión: Conectando...")
@@ -613,14 +653,14 @@ class VentanaPrincipal(QMainWindow):
                 self.barra_estado_widget.actualizar_estado(True, f"{desc_conexion} a la ECU correctamente.")
                 self.lbl_resumen.setText("Resumen rápido: Sistema sincronizado y estable.")
             finally:
-                # Rehabilitar el botón de conexión tras completar el enlace o cerrar el diálogo de error
-                self.btn_conectar.setText("Conectar / Desconectar Equipo")
-                self.btn_conectar.setEnabled(True)
+                # Mostrar 'Desconectar' en rojo si conectó o volver a 'Conectar' si falló
+                self._actualizar_boton_conexion(conectado=self.estadoConexion)
 
         else:
             # Rutina de Desconexión controlada
             self.estadoConexion = False
             self._ultima_rpm = 0.0
+            self._actualizar_boton_conexion(conectado=False)
             self.lbl_estado_texto.setText("Estado de Conexión: Desconectado")
             self.lbl_estado_texto.setStyleSheet("color: #d9534f; font-weight: bold;")
             self.barra_estado_widget.actualizar_estado(False, "Desconectado del vehículo.")
